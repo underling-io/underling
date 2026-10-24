@@ -1,4 +1,4 @@
-package features_test
+package slices_test
 
 import (
 	"go/ast"
@@ -15,11 +15,11 @@ import (
 )
 
 const (
-	modulePath   = "heinzel"
-	featuresPath = modulePath + "/internal/features"
+	modulePath = "heinzel"
+	slicesPath = modulePath + "/internal/slices"
 )
 
-// allowedShared are the only non-stdlib packages a feature may import: the
+// allowedShared are the only non-stdlib packages a slice may import: the
 // shared event contracts and generic infrastructure.
 var allowedShared = map[string]bool{
 	modulePath + "/internal/events":       true,
@@ -66,29 +66,29 @@ func imports(t *testing.T, dir string) map[string][]string {
 	return found
 }
 
-func TestFeaturesImportOnlyStdlibSharedEventsAndInfrastructure(t *testing.T) {
+func TestSlicesImportOnlyStdlibSharedEventsAndInfrastructure(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("read features dir: %v", err)
+		t.Fatalf("read slices dir: %v", err)
 	}
-	features := 0
+	sliceCount := 0
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		features++
-		self := featuresPath + "/" + entry.Name()
+		sliceCount++
+		self := slicesPath + "/" + entry.Name()
 		for file, paths := range imports(t, entry.Name()) {
 			for _, path := range paths {
 				ownPackage := path == self || strings.HasPrefix(path, self+"/")
 				if !isStdlib(path) && !allowedShared[path] && !ownPackage {
-					t.Errorf("%s imports %s; features may only import the stdlib, their own packages and %v", file, path, slices.Sorted(maps.Keys(allowedShared)))
+					t.Errorf("%s imports %s; slices may only import the stdlib, their own package and %v", file, path, slices.Sorted(maps.Keys(allowedShared)))
 				}
 			}
 		}
 	}
-	if features == 0 {
-		t.Fatal("found no feature packages")
+	if sliceCount == 0 {
+		t.Fatal("found no slice packages")
 	}
 }
 

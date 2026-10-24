@@ -1,16 +1,23 @@
 # Event Model
 
-heinzel is organised as vertical slices, event-modeling style. Each slice reads as
-**trigger → command → event → reaction**. Slices that belong to one feature live
-together in one package under `internal/features/<name>/`.
+heinzel is organised as vertical slices, event-modeling style. A slice is
+either a **state change** (trigger → command → event) or an **automation**
+(event → reaction). Each slice is one package, `internal/slices/<slice>/`.
+Slices never import each other; they are coupled only through the events in
+`internal/events`.
 
-## Sentry (`internal/features/sentry/`)
+## Sentry
 
-### State change: record issue alert
+Two independent slices, linked by the `SentryIssueAlertReceived` event.
+
+### State change: record Sentry issue alert (`internal/slices/recordsentryissuealert/`)
 
 | Trigger | Command | Event |
 | --- | --- | --- |
-| `POST /sentry/callback` (Sentry internal-integration webhook) | Record issue alert | `SentryIssueAlertReceived` |
+| `POST /sentry/callback` (Sentry internal-integration webhook) | Record Sentry issue alert | `SentryIssueAlertReceived` |
+
+The slice also loads the client secret from `SENTRY_CLIENT_SECRET`. It runs no
+event handlers.
 
 The command runs these checks in order:
 
@@ -43,30 +50,33 @@ The command runs these checks in order:
 }
 ```
 
-### Automation: log issue alert
+### Automation: handle Sentry issue alert (`internal/slices/handlesentryissuealert/`)
 
 | Event | Reaction |
 | --- | --- |
-| `SentryIssueAlertReceived` | `sentry-issue-alert-logger` writes one structured log line |
+| `SentryIssueAlertReceived` | TBD; for now `sentry-issue-alert-logger` writes one structured log line |
 
-The log line holds `handler`, `position`, `issueId`, `title` and `sentryLevel`.
-The alert level is logged as `sentryLevel` because `level` is the log record's
-own level. The handler ignores all other event types. It logs a payload it
-cannot decode as an error and skips it. Its name is its checkpoint key, so it
-must never change.
+The real reaction is not defined yet. Until it is, the log line is a
+placeholder. It holds `handler`, `position`, `issueId`, `title` and
+`sentryLevel`. The alert level is logged as `sentryLevel` because `level` is
+the log record's own level. The handler ignores all other event types. It logs
+a payload it cannot decode as an error and skips it. Its name is its checkpoint
+key, so it must never change. The slice registers no routes.
 
-## Adding a feature
+## Adding a slice
 
-- Put everything for the feature in one package, `internal/features/<name>/`:
-  its HTTP routes, its command handling and its event handlers.
-- Expose a constructor that returns an `agent.Feature`:
+- Put the slice in its own package, `internal/slices/<slice>/`, named after its
+  command or automation (`record…`, `handle…`). One package holds exactly one
+  slice: its route and command handling, or its event handler.
+- Expose a constructor that returns an `agent.Slice`:
   `func(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handler`.
-  It registers the routes on `mux` and returns the handlers to run. Pass it to
-  `agent.Run` from `cmd/heinzel/main.go`, which also reads the feature's config.
-- A feature may import only the stdlib, its own packages, `internal/events`,
+  It registers zero or more routes on `mux` and returns zero or more handlers
+  to run. Pass it to `agent.Run` from `cmd/heinzel/main.go`, which also reads
+  the slice's config.
+- A slice may import only the stdlib, its own package, `internal/events`,
   `internal/eventstore`, `internal/eventhandler` and `internal/agent`. It never
-  imports another feature or a shared helper package.
-  `internal/features/imports_test.go` enforces this.
-- Event contracts that another feature reads go in `internal/events`: a type-name
-  constant and a payload struct, with no funcs or methods. Their JSON is persisted,
-  so treat it as locked.
+  imports another slice or a shared helper package.
+  `internal/slices/imports_test.go` enforces this.
+- Event contracts that another slice reads go in `internal/events`: a type-name
+  constant and a payload struct, with no funcs or methods. Their JSON is
+  persisted, so treat it as locked.

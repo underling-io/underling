@@ -1,10 +1,9 @@
-package sentry_test
+package handlesentryissuealert_test
 
 import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
-	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,13 +11,14 @@ import (
 
 	"heinzel/internal/eventhandler"
 	"heinzel/internal/eventstore"
-	"heinzel/internal/features/sentry"
+	"heinzel/internal/slices/handlesentryissuealert"
 )
 
-// alertLogger returns the feature's only handler, logging to buf.
+// alertLogger returns the slice's only handler, logging to buf. The nil mux
+// panics if the slice ever registers a route.
 func alertLogger(t *testing.T, buf *bytes.Buffer) eventhandler.Handler {
 	t.Helper()
-	handlers := sentry.New(secret, slog.New(slog.NewJSONHandler(buf, nil)))(http.NewServeMux(), nil)
+	handlers := handlesentryissuealert.New(slog.New(slog.NewJSONHandler(buf, nil)))(nil, nil)
 	if len(handlers) != 1 {
 		t.Fatalf("got %d handlers, want 1", len(handlers))
 	}

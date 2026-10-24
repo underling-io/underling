@@ -1,4 +1,4 @@
-// Package events holds the event contracts shared between features: type
+// Package events holds the event contracts shared between slices: type
 // names and payload shapes. It holds no behaviour. The JSON shapes are
 // persisted, so changing them is a breaking change.
 package events

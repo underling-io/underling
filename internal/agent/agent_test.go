@@ -43,7 +43,7 @@ func (l *notifyingListener) Close() error {
 	return l.Listener.Close()
 }
 
-func start(t *testing.T, cfg agent.Config, features []agent.Feature, logger *slog.Logger) *instance {
+func start(t *testing.T, cfg agent.Config, slices []agent.Slice, logger *slog.Logger) *instance {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -52,7 +52,7 @@ func start(t *testing.T, cfg agent.Config, features []agent.Feature, logger *slo
 	nl := &notifyingListener{Listener: ln, closed: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	inst := &instance{url: "http://" + ln.Addr().String(), cancel: cancel, done: make(chan error, 1), listenerClosed: nl.closed}
-	go func() { inst.done <- agent.Run(ctx, cfg, nl, features, logger) }()
+	go func() { inst.done <- agent.Run(ctx, cfg, nl, slices, logger) }()
 	return inst
 }
 
@@ -95,7 +95,7 @@ func appendEvent(w http.ResponseWriter, store *eventstore.Store, stream string) 
 	_, _ = io.WriteString(w, strconv.FormatUint(position, 10))
 }
 
-// appender is a test feature serving POST /append/{stream}. It has no handlers.
+// appender is a test slice serving POST /append/{stream}. It has no handlers.
 func appender(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handler {
 	mux.HandleFunc("POST /append/{stream}", func(w http.ResponseWriter, r *http.Request) {
 		appendEvent(w, store, r.PathValue("stream"))
@@ -103,16 +103,16 @@ func appender(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handle
 	return nil
 }
 
-// withHandlers is a test feature that only contributes handlers.
-func withHandlers(handlers ...eventhandler.Handler) agent.Feature {
+// withHandlers is a test slice that only contributes handlers.
+func withHandlers(handlers ...eventhandler.Handler) agent.Slice {
 	return func(*http.ServeMux, *eventstore.Store) []eventhandler.Handler { return handlers }
 }
 
-// blocking is a test feature serving POST /block, which waits for release
+// blocking is a test slice serving POST /block, which waits for release
 // before appending to stream "blocked".
-func blocking() (feature agent.Feature, entered chan struct{}, release chan struct{}) {
+func blocking() (slice agent.Slice, entered chan struct{}, release chan struct{}) {
 	entered, release = make(chan struct{}, 1), make(chan struct{})
-	feature = func(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handler {
+	slice = func(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handler {
 		mux.HandleFunc("POST /block", func(w http.ResponseWriter, _ *http.Request) {
 			entered <- struct{}{}
 			<-release
@@ -120,7 +120,7 @@ func blocking() (feature agent.Feature, entered chan struct{}, release chan stru
 		})
 		return nil
 	}
-	return feature, entered, release
+	return slice, entered, release
 }
 
 // recorder forwards every handled event's position to a channel.
@@ -172,7 +172,7 @@ func TestEventsAreHandledOnceAcrossRestarts(t *testing.T) {
 
 	for run, stream := range []string{"first", "second"} {
 		rec := newRecorder()
-		inst := start(t, cfg, []agent.Feature{appender, withHandlers(rec)}, discard())
+		inst := start(t, cfg, []agent.Slice{appender, withHandlers(rec)}, discard())
 
 		wantPosition := uint64(run + 1)
 		code, body := inst.post(t, "/append/"+stream)
@@ -216,7 +216,7 @@ func TestShutdownDrainsRequestsThenStopsHandlersThenClosesStore(t *testing.T) {
 	block, requestEntered, releaseRequest := blocking()
 	handler := newMidEventHandler()
 	logs := make(lineWriter, 100)
-	inst := start(t, cfg, []agent.Feature{appender, block, withHandlers(handler)}, slog.New(slog.NewJSONHandler(logs, nil)))
+	inst := start(t, cfg, []agent.Slice{appender, block, withHandlers(handler)}, slog.New(slog.NewJSONHandler(logs, nil)))
 
 	for _, stream := range []string{"a", "b", "c"} {
 		if code, body := inst.post(t, "/append/"+stream); code != http.StatusOK {
@@ -263,7 +263,7 @@ func TestShutdownDrainsRequestsThenStopsHandlersThenClosesStore(t *testing.T) {
 
 	resumed := newMidEventHandler()
 	resumed.entered <- 0 // never block
-	inst = start(t, cfg, []agent.Feature{withHandlers(resumed)}, discard())
+	inst = start(t, cfg, []agent.Slice{withHandlers(resumed)}, discard())
 	for _, want := range []uint64{2, 3, 4} {
 		select {
 		case got := <-resumed.handled:
@@ -283,7 +283,7 @@ func TestShutdownCompletesWhenRequestOutlivesTimeout(t *testing.T) {
 	dir := t.TempDir()
 	cfg := agent.Config{DataDir: dir, ShutdownTimeout: 10 * time.Millisecond}
 	block, requestEntered, releaseRequest := blocking()
-	inst := start(t, cfg, []agent.Feature{block}, discard())
+	inst := start(t, cfg, []agent.Slice{block}, discard())
 
 	inFlight := make(chan struct{})
 	go func() {

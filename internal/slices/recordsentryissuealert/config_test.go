@@ -1,9 +1,9 @@
-package sentry_test
+package recordsentryissuealert_test
 
 import (
 	"testing"
 
-	"heinzel/internal/features/sentry"
+	"heinzel/internal/slices/recordsentryissuealert"
 )
 
 func env(vars map[string]string) func(string) string {
@@ -11,7 +11,7 @@ func env(vars map[string]string) func(string) string {
 }
 
 func TestSecretFromEnvReadsClientSecret(t *testing.T) {
-	got, err := sentry.SecretFromEnv(env(map[string]string{"SENTRY_CLIENT_SECRET": "s3cret"}))
+	got, err := recordsentryissuealert.SecretFromEnv(env(map[string]string{"SENTRY_CLIENT_SECRET": "s3cret"}))
 	if err != nil || got != "s3cret" {
 		t.Fatalf("got %q err %v, want s3cret", got, err)
 	}
@@ -23,7 +23,7 @@ func TestSecretFromEnvRejectsMissingOrEmptySecret(t *testing.T) {
 		"empty":   {"SENTRY_CLIENT_SECRET": ""},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := sentry.SecretFromEnv(env(vars)); err == nil {
+			if _, err := recordsentryissuealert.SecretFromEnv(env(vars)); err == nil {
 				t.Fatal("got no error, want one")
 			}
 		})

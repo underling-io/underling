@@ -1,4 +1,4 @@
-package sentry
+package recordsentryissuealert
 
 import (
 	"crypto/hmac"
@@ -17,7 +17,7 @@ import (
 
 const maxBodyBytes = 10 << 20
 
-// callback serves POST /sentry/callback: the "Record issue alert" command.
+// callback serves POST /sentry/callback: the "Record Sentry issue alert" command.
 type callback struct {
 	secret []byte
 	store  *eventstore.Store

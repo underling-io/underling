@@ -1,4 +1,4 @@
-// Package agent wires the event store, the features' HTTP routes and their
+// Package agent wires the event store, the slices' HTTP routes and their
 // event handlers together and owns their lifecycle.
 package agent
 
@@ -16,16 +16,16 @@ import (
 
 const readHeaderTimeout = 10 * time.Second
 
-// Feature is one feature package's slices. It registers its HTTP routes on
-// mux, may append to store from them, and returns the event handlers it needs
+// Slice is one vertical slice. It registers zero or more HTTP routes on mux,
+// may append to store from them, and returns zero or more event handlers to
 // run.
-type Feature func(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handler
+type Slice func(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handler
 
-// Run serves the features' routes on ln until ctx is cancelled, then shuts
+// Run serves the slices' routes on ln until ctx is cancelled, then shuts
 // down in order: it drains HTTP requests (forcing them closed after cfg.ShutdownTimeout),
 // stops the event handlers, and closes the store. Every step runs even if an
 // earlier one failed; the first error is returned.
-func Run(ctx context.Context, cfg Config, ln net.Listener, features []Feature, logger *slog.Logger) error {
+func Run(ctx context.Context, cfg Config, ln net.Listener, slices []Slice, logger *slog.Logger) error {
 	store, err := eventstore.Open(cfg.DataDir)
 	if err != nil {
 		_ = ln.Close()
@@ -33,7 +33,7 @@ func Run(ctx context.Context, cfg Config, ln net.Listener, features []Feature, l
 	}
 	mux := http.NewServeMux()
 	var handlers []eventhandler.Handler
-	for _, register := range features {
+	for _, register := range slices {
 		handlers = append(handlers, register(mux, store)...)
 	}
 	runner := eventhandler.Start(store, handlers, logger)

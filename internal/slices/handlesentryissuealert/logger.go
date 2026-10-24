@@ -1,4 +1,4 @@
-package sentry
+package handlesentryissuealert
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"heinzel/internal/eventstore"
 )
 
-// alertLogger is the automation slice: it logs every recorded issue alert.
+// alertLogger logs every recorded issue alert.
 type alertLogger struct {
 	logger *slog.Logger
 }

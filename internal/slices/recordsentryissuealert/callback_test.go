@@ -1,4 +1,4 @@
-package sentry_test
+package recordsentryissuealert_test
 
 import (
 	"crypto/hmac"
@@ -14,7 +14,7 @@ import (
 
 	"heinzel/internal/events"
 	"heinzel/internal/eventstore"
-	"heinzel/internal/features/sentry"
+	"heinzel/internal/slices/recordsentryissuealert"
 )
 
 const secret = "test-client-secret"
@@ -97,11 +97,17 @@ func newStore(t *testing.T) *eventstore.Store {
 	return s
 }
 
-// newMux registers the Sentry feature on a fresh mux backed by store.
+// newMux registers the slice on a fresh mux backed by store.
 func newMux(store *eventstore.Store) *http.ServeMux {
 	mux := http.NewServeMux()
-	sentry.New(secret, slog.New(slog.DiscardHandler))(mux, store)
+	recordsentryissuealert.New(secret, slog.New(slog.DiscardHandler))(mux, store)
 	return mux
+}
+
+func TestSliceRunsNoEventHandlers(t *testing.T) {
+	if handlers := recordsentryissuealert.New(secret, slog.New(slog.DiscardHandler))(http.NewServeMux(), newStore(t)); len(handlers) != 0 {
+		t.Fatalf("got %d handlers, want none", len(handlers))
+	}
 }
 
 type request struct {

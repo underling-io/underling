@@ -12,7 +12,8 @@ import (
 	"syscall"
 
 	"heinzel/internal/agent"
-	"heinzel/internal/features/sentry"
+	"heinzel/internal/slices/handlesentryissuealert"
+	"heinzel/internal/slices/recordsentryissuealert"
 )
 
 func main() {
@@ -30,12 +31,15 @@ func run() int {
 		logger.Error("invalid arguments", "error", err)
 		return 2
 	}
-	sentrySecret, err := sentry.SecretFromEnv(os.Getenv)
+	sentrySecret, err := recordsentryissuealert.SecretFromEnv(os.Getenv)
 	if err != nil {
 		logger.Error("invalid configuration", "error", err)
 		return 2
 	}
-	features := []agent.Feature{sentry.New(sentrySecret, logger)}
+	slices := []agent.Slice{
+		recordsentryissuealert.New(sentrySecret, logger),
+		handlesentryissuealert.New(logger),
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -45,7 +49,7 @@ func run() int {
 		logger.Error("listen", "addr", cfg.Addr, "error", err)
 		return 1
 	}
-	if err := agent.Run(ctx, cfg, ln, features, logger); err != nil {
+	if err := agent.Run(ctx, cfg, ln, slices, logger); err != nil {
 		logger.Error("agent stopped with error", "error", err)
 		return 1
 	}
