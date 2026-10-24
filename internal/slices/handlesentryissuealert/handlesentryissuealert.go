@@ -12,6 +12,12 @@ import (
 	"heinzel/internal/agent"
 )
 
+func init() {
+	agent.RegisterAutomation(func(d agent.Deps) (agent.Automation, error) {
+		return New(d.Logger), nil
+	})
+}
+
 // New returns the slice, which logs each alert to logger.
 func New(logger *slog.Logger) agent.Automation {
 	return &alertLogger{logger: logger}

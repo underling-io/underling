@@ -12,8 +12,7 @@ import (
 	"syscall"
 
 	"heinzel/internal/agent"
-	"heinzel/internal/slices/handlesentryissuealert"
-	"heinzel/internal/slices/recordsentryissuealert"
+	_ "heinzel/internal/slices" // registers every slice with the agent
 )
 
 func main() {
@@ -31,18 +30,10 @@ func run() int {
 		logger.Error("invalid arguments", "error", err)
 		return 2
 	}
-	recordAlert, err := recordsentryissuealert.New(os.Getenv, logger)
+	slices, err := agent.Build(agent.Deps{Getenv: os.Getenv, Logger: logger})
 	if err != nil {
 		logger.Error("invalid configuration", "error", err)
 		return 2
-	}
-	slices := agent.Slices{
-		StateChanges: []agent.StateChange{
-			recordAlert,
-		},
-		Automations: []agent.Automation{
-			handlesentryissuealert.New(logger),
-		},
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

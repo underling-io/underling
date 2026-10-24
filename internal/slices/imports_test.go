@@ -6,7 +6,6 @@ import (
 	"go/token"
 	"io/fs"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -67,18 +66,9 @@ func imports(t *testing.T, dir string) map[string][]string {
 }
 
 func TestSlicesImportOnlyStdlibSharedEventsAndInfrastructure(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read slices dir: %v", err)
-	}
-	sliceCount := 0
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		sliceCount++
-		self := slicesPath + "/" + entry.Name()
-		for file, paths := range imports(t, entry.Name()) {
+	for _, dir := range mustSliceDirs(t) {
+		self := slicesPath + "/" + dir
+		for file, paths := range imports(t, dir) {
 			for _, path := range paths {
 				ownPackage := path == self || strings.HasPrefix(path, self+"/")
 				if !isStdlib(path) && !allowedShared[path] && !ownPackage {
@@ -86,9 +76,6 @@ func TestSlicesImportOnlyStdlibSharedEventsAndInfrastructure(t *testing.T) {
 				}
 			}
 		}
-	}
-	if sliceCount == 0 {
-		t.Fatal("found no slice packages")
 	}
 }
 

@@ -14,6 +14,12 @@ import (
 	"heinzel/internal/eventstore"
 )
 
+func init() {
+	agent.RegisterStateChange(func(d agent.Deps) (agent.StateChange, error) {
+		return New(d.Getenv, d.Logger)
+	})
+}
+
 // New returns the slice, serving POST /sentry/callback. It reads the internal
 // integration's client secret, used to verify webhook signatures, from
 // SENTRY_CLIENT_SECRET through getenv, and fails if it is missing or empty.
