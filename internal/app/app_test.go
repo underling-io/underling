@@ -1,4 +1,4 @@
-package agent_test
+package app_test
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/agent"
+	"heinzel/internal/app"
 	"heinzel/internal/eventstore"
 )
 
@@ -22,7 +22,7 @@ const waitLimit = 5 * time.Second
 
 func discard() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
-// instance is one in-process run of the agent.
+// instance is one in-process run of the app.
 type instance struct {
 	url            string
 	cancel         context.CancelFunc
@@ -30,7 +30,7 @@ type instance struct {
 	listenerClosed chan struct{}
 }
 
-// notifyingListener closes closed when the agent closes the listener.
+// notifyingListener closes closed when the app closes the listener.
 type notifyingListener struct {
 	net.Listener
 	once   sync.Once
@@ -42,7 +42,7 @@ func (l *notifyingListener) Close() error {
 	return l.Listener.Close()
 }
 
-func start(t *testing.T, cfg agent.Config, slices agent.Slices, logger *slog.Logger) *instance {
+func start(t *testing.T, cfg app.Config, slices app.Slices, logger *slog.Logger) *instance {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -51,7 +51,7 @@ func start(t *testing.T, cfg agent.Config, slices agent.Slices, logger *slog.Log
 	nl := &notifyingListener{Listener: ln, closed: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	inst := &instance{url: "http://" + ln.Addr().String(), cancel: cancel, done: make(chan error, 1), listenerClosed: nl.closed}
-	go func() { inst.done <- agent.Run(ctx, cfg, nl, slices, logger) }()
+	go func() { inst.done <- app.Run(ctx, cfg, nl, slices, logger) }()
 	return inst
 }
 
@@ -95,7 +95,7 @@ func appendEvent(w http.ResponseWriter, store *eventstore.Store, stream string) 
 }
 
 // appender is a test state change serving POST /append/{stream}.
-var appender = agent.StateChange{
+var appender = app.StateChange{
 	Pattern: "POST /append/{stream}",
 	Handler: func(store *eventstore.Store) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,9 +106,9 @@ var appender = agent.StateChange{
 
 // blocking is a test state change serving POST /block, which waits for
 // release before appending to stream "blocked".
-func blocking() (sc agent.StateChange, entered chan struct{}, release chan struct{}) {
+func blocking() (sc app.StateChange, entered chan struct{}, release chan struct{}) {
 	entered, release = make(chan struct{}, 1), make(chan struct{})
-	sc = agent.StateChange{
+	sc = app.StateChange{
 		Pattern: "POST /block",
 		Handler: func(store *eventstore.Store) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -166,11 +166,11 @@ func waitForLog(t *testing.T, lines lineWriter, msg string) {
 }
 
 func TestEventsAreHandledOnceAcrossRestarts(t *testing.T) {
-	cfg := agent.Config{DataDir: t.TempDir(), ShutdownTimeout: time.Second}
+	cfg := app.Config{DataDir: t.TempDir(), ShutdownTimeout: time.Second}
 
 	for run, stream := range []string{"first", "second"} {
 		rec := newRecorder()
-		inst := start(t, cfg, agent.Slices{StateChanges: []agent.StateChange{appender}, Automations: []agent.Automation{rec}}, discard())
+		inst := start(t, cfg, app.Slices{StateChanges: []app.StateChange{appender}, Automations: []app.Automation{rec}}, discard())
 
 		wantPosition := uint64(run + 1)
 		code, body := inst.post(t, "/append/"+stream)
@@ -210,11 +210,11 @@ func (h *midEventHandler) Handle(e eventstore.Event) {
 
 func TestShutdownDrainsRequestsThenStopsHandlersThenClosesStore(t *testing.T) {
 	dir := t.TempDir()
-	cfg := agent.Config{DataDir: dir, ShutdownTimeout: waitLimit}
+	cfg := app.Config{DataDir: dir, ShutdownTimeout: waitLimit}
 	block, requestEntered, releaseRequest := blocking()
 	handler := newMidEventHandler()
 	logs := make(lineWriter, 100)
-	inst := start(t, cfg, agent.Slices{StateChanges: []agent.StateChange{appender, block}, Automations: []agent.Automation{handler}}, slog.New(slog.NewJSONHandler(logs, nil)))
+	inst := start(t, cfg, app.Slices{StateChanges: []app.StateChange{appender, block}, Automations: []app.Automation{handler}}, slog.New(slog.NewJSONHandler(logs, nil)))
 
 	for _, stream := range []string{"a", "b", "c"} {
 		if code, body := inst.post(t, "/append/"+stream); code != http.StatusOK {
@@ -261,7 +261,7 @@ func TestShutdownDrainsRequestsThenStopsHandlersThenClosesStore(t *testing.T) {
 
 	resumed := newMidEventHandler()
 	resumed.entered <- 0 // never block
-	inst = start(t, cfg, agent.Slices{Automations: []agent.Automation{resumed}}, discard())
+	inst = start(t, cfg, app.Slices{Automations: []app.Automation{resumed}}, discard())
 	for _, want := range []uint64{2, 3, 4} {
 		select {
 		case got := <-resumed.handled:
@@ -279,9 +279,9 @@ func TestShutdownDrainsRequestsThenStopsHandlersThenClosesStore(t *testing.T) {
 
 func TestShutdownCompletesWhenRequestOutlivesTimeout(t *testing.T) {
 	dir := t.TempDir()
-	cfg := agent.Config{DataDir: dir, ShutdownTimeout: 10 * time.Millisecond}
+	cfg := app.Config{DataDir: dir, ShutdownTimeout: 10 * time.Millisecond}
 	block, requestEntered, releaseRequest := blocking()
-	inst := start(t, cfg, agent.Slices{StateChanges: []agent.StateChange{block}}, discard())
+	inst := start(t, cfg, app.Slices{StateChanges: []app.StateChange{block}}, discard())
 
 	inFlight := make(chan struct{})
 	go func() {
@@ -315,7 +315,7 @@ func TestRunFailsWhenStoreCannotOpen(t *testing.T) {
 	}
 	defer held.Close()
 
-	inst := start(t, agent.Config{DataDir: dir, ShutdownTimeout: time.Second}, agent.Slices{}, discard())
+	inst := start(t, app.Config{DataDir: dir, ShutdownTimeout: time.Second}, app.Slices{}, discard())
 	select {
 	case err := <-inst.done:
 		if err == nil {
@@ -327,7 +327,7 @@ func TestRunFailsWhenStoreCannotOpen(t *testing.T) {
 	inst.waitUntilListenerClosed(t)
 }
 
-// waitUntilListenerClosed waits until the agent stops accepting connections,
+// waitUntilListenerClosed waits until the app stops accepting connections,
 // i.e. until shutdown has begun.
 func (i *instance) waitUntilListenerClosed(t *testing.T) {
 	t.Helper()

@@ -2,8 +2,8 @@
 
 heinzel is organised as vertical slices, event-modeling style. A slice is
 either a **state change** (trigger → command → event) or an **automation**
-(event → reaction). A state change is an `agent.StateChange` (one HTTP route);
-an automation is an `agent.Automation` (one event handler). Each slice is one
+(event → reaction). A state change is an `app.StateChange` (one HTTP route);
+an automation is an `app.Automation` (one event handler). Each slice is one
 package, `internal/slices/<slice>/`.
 Slices never import each other; they are coupled only through the events in
 `internal/events`.
@@ -71,28 +71,28 @@ key, so it must never change.
   command or automation (`record…`, `handle…`). One package holds exactly one
   slice: its route and command handling, or its event handler.
 - Expose a constructor for the slice's kind:
-  - A state change has `New(...) agent.StateChange`: a struct with the route's
+  - A state change has `New(...) app.StateChange`: a struct with the route's
     `Pattern` (e.g. `POST /sentry/callback`) and a
-    `Handler func(store *eventstore.Store) http.Handler`, which the agent calls
+    `Handler func(store *eventstore.Store) http.Handler`, which the app calls
     once at startup.
-  - An automation has `New(...) agent.Automation`, an alias for
+  - An automation has `New(...) app.Automation`, an alias for
     `eventhandler.Handler`.
 - A slice loads its own config inside its constructor. A slice with config
   takes the env lookup as its first argument and also returns an error, e.g.
-  `New(getenv func(string) string, …) (agent.StateChange, error)`. It reads its
+  `New(getenv func(string) string, …) (app.StateChange, error)`. It reads its
   settings from the lookup it's given and returns an error if they are invalid.
   A slice with no config keeps the plain constructor.
 - Register the slice in an `init()` in its package, with a factory that calls
-  `New` with what it needs from `agent.Deps` (`Getenv`, `Logger`):
-  `agent.RegisterStateChange` for a state change, `agent.RegisterAutomation`
-  for an automation. At startup `main` calls `agent.Build` with `os.Getenv`
+  `New` with what it needs from `app.Deps` (`Getenv`, `Logger`):
+  `app.RegisterStateChange` for a state change, `app.RegisterAutomation`
+  for an automation. At startup `main` calls `app.Build` with `os.Getenv`
   and its logger, and exits with "invalid configuration" on the first factory
   error, so it never knows a slice or its settings.
   The register call may sit in a helper that `init()` calls, but registering
   directly in `init()` is recommended.
   `internal/slices/registration_test.go` fails, naming the folder, if a slice
-  has no `func init()` or never calls `agent.RegisterStateChange` or
-  `agent.RegisterAutomation`. It doesn't check that `init()` actually reaches
+  has no `func init()` or never calls `app.RegisterStateChange` or
+  `app.RegisterAutomation`. It doesn't check that `init()` actually reaches
   a helper's register call.
 - Run `go generate ./...`. It rewrites `internal/slices/slices_gen.go`, which
   blank-imports every slice directory so its `init()` runs; `main` imports only
@@ -102,7 +102,7 @@ key, so it must never change.
   with `.` or `_`. `internal/slices/generated_test.go` fails until the
   generated file matches the directories.
 - A slice may import only the stdlib, its own package, `internal/events`,
-  `internal/eventstore`, `internal/eventhandler` and `internal/agent`. It never
+  `internal/eventstore`, `internal/eventhandler` and `internal/app`. It never
   imports another slice or a shared helper package.
   `internal/slices/imports_test.go` enforces this.
 - Event contracts that another slice reads go in `internal/events`: a type-name

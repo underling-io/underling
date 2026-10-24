@@ -9,16 +9,16 @@ package handlesentryissuealert
 import (
 	"log/slog"
 
-	"heinzel/internal/agent"
+	"heinzel/internal/app"
 )
 
 func init() {
-	agent.RegisterAutomation(func(d agent.Deps) (agent.Automation, error) {
+	app.RegisterAutomation(func(d app.Deps) (app.Automation, error) {
 		return New(d.Logger), nil
 	})
 }
 
 // New returns the slice, which logs each alert to logger.
-func New(logger *slog.Logger) agent.Automation {
+func New(logger *slog.Logger) app.Automation {
 	return &alertLogger{logger: logger}
 }

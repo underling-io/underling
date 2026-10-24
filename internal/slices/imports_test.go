@@ -24,7 +24,7 @@ var allowedShared = map[string]bool{
 	modulePath + "/internal/events":       true,
 	modulePath + "/internal/eventstore":   true,
 	modulePath + "/internal/eventhandler": true,
-	modulePath + "/internal/agent":        true,
+	modulePath + "/internal/app":          true,
 }
 
 // isStdlib applies the go command's rule (no dot in the first path element),

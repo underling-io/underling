@@ -1,7 +1,7 @@
 //go:build ignore
 
 // gen writes the file that blank-imports every slice package under the
-// current directory, so that each slice registers itself with the agent.
+// current directory, so that each slice registers itself with the app.
 // Run it with `go generate ./...`.
 package main
 

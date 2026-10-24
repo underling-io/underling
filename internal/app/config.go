@@ -1,4 +1,4 @@
-package agent
+package app
 
 import (
 	"flag"
@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Config holds the agent's command-line settings.
+// Config holds the app's command-line settings.
 type Config struct {
 	Addr            string
 	DataDir         string

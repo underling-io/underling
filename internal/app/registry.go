@@ -1,8 +1,8 @@
-package agent
+package app
 
 import "log/slog"
 
-// Deps is what the agent hands every slice factory at startup.
+// Deps is what the app hands every slice factory at startup.
 type Deps struct {
 	// Getenv looks up an environment variable, like os.Getenv.
 	Getenv func(string) string

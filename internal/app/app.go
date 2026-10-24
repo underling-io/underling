@@ -1,7 +1,7 @@
-// Package agent wires the event store, the state-change slices' HTTP routes
+// Package app wires the event store, the state-change slices' HTTP routes
 // and the automation slices' event handlers together and owns their
 // lifecycle.
-package agent
+package app
 
 import (
 	"context"
@@ -28,7 +28,7 @@ type StateChange struct {
 // events.
 type Automation = eventhandler.Handler
 
-// Slices is every slice the agent runs, grouped by kind.
+// Slices is every slice the app runs, grouped by kind.
 type Slices struct {
 	StateChanges []StateChange
 	Automations  []Automation
@@ -57,7 +57,7 @@ func Run(ctx context.Context, cfg Config, ln net.Listener, slices Slices, logger
 	}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ln) }()
-	logger.Info("agent started", "addr", ln.Addr().String(), "dataDir", cfg.DataDir)
+	logger.Info("app started", "addr", ln.Addr().String(), "dataDir", cfg.DataDir)
 
 	var errs []error
 	select {
@@ -65,7 +65,7 @@ func Run(ctx context.Context, cfg Config, ln net.Listener, slices Slices, logger
 	case err := <-serveErr:
 		errs = append(errs, fmt.Errorf("serve http: %w", err))
 	}
-	logger.Info("agent shutting down")
+	logger.Info("app shutting down")
 
 	errs = append(errs, shutdownHTTP(srv, cfg.ShutdownTimeout))
 	if err := runner.Stop(); err != nil {

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/agent"
+	"heinzel/internal/app"
 	_ "heinzel/internal/slices" // registers every slice, as main does
 )
 
@@ -25,7 +25,7 @@ const (
 )
 
 // pipeListener is an in-memory net.Listener: Dial hands it the server end of
-// a net.Pipe, so the agent can be served without binding a socket.
+// a net.Pipe, so the app can be served without binding a socket.
 type pipeListener struct {
 	conns     chan net.Conn
 	done      chan struct{}
@@ -127,34 +127,34 @@ func (s *logSink) waitFor(t *testing.T, match func(map[string]any) bool) map[str
 	}
 }
 
-// startAgent builds the slices the way main does and runs the agent on an
+// startApp builds the slices the way main does and runs the app on an
 // in-memory listener with a fresh data dir. It returns a client connected to
-// the agent. Cleanup stops the agent and requires a clean shutdown.
-func startAgent(t *testing.T, logger *slog.Logger) *http.Client {
+// the app. Cleanup stops the app and requires a clean shutdown.
+func startApp(t *testing.T, logger *slog.Logger) *http.Client {
 	t.Helper()
 	env := map[string]string{"SENTRY_CLIENT_SECRET": e2eSecret}
-	slices, err := agent.Build(agent.Deps{
+	slices, err := app.Build(app.Deps{
 		Getenv: func(key string) string { return env[key] },
 		Logger: logger,
 	})
 	if err != nil {
-		t.Fatalf("agent.Build: %v", err)
+		t.Fatalf("app.Build: %v", err)
 	}
 
-	cfg := agent.Config{DataDir: t.TempDir(), ShutdownTimeout: e2eTimeout}
+	cfg := app.Config{DataDir: t.TempDir(), ShutdownTimeout: e2eTimeout}
 	ln := newPipeListener()
 	ctx, cancel := context.WithCancel(context.Background())
 	runErr := make(chan error, 1)
-	go func() { runErr <- agent.Run(ctx, cfg, ln, slices, logger) }()
+	go func() { runErr <- app.Run(ctx, cfg, ln, slices, logger) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
 		case err := <-runErr:
 			if err != nil {
-				t.Errorf("agent.Run returned %v, want nil", err)
+				t.Errorf("app.Run returned %v, want nil", err)
 			}
 		case <-time.After(2 * e2eTimeout):
-			t.Errorf("agent.Run did not return within %v of cancellation", 2*e2eTimeout)
+			t.Errorf("app.Run did not return within %v of cancellation", 2*e2eTimeout)
 		}
 	})
 
@@ -172,7 +172,7 @@ func sign(body string) string {
 
 func TestSentryIssueAlertIsRecordedAndHandled(t *testing.T) {
 	sink := newLogSink()
-	client := startAgent(t, slog.New(slog.NewJSONHandler(sink, nil)))
+	client := startApp(t, slog.New(slog.NewJSONHandler(sink, nil)))
 
 	const issueID = "1117540176"
 	body := `{"action":"triggered","data":{"event":{"event_id":"aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4","issue_id":"` + issueID +

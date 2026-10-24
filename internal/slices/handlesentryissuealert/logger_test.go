@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/agent"
+	"heinzel/internal/app"
 	"heinzel/internal/eventstore"
 	"heinzel/internal/slices/handlesentryissuealert"
 )
 
 // alertLogger returns the slice's automation, logging to buf.
-func alertLogger(t *testing.T, buf *bytes.Buffer) agent.Automation {
+func alertLogger(t *testing.T, buf *bytes.Buffer) app.Automation {
 	t.Helper()
 	return handlesentryissuealert.New(slog.New(slog.NewJSONHandler(buf, nil)))
 }

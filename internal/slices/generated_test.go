@@ -10,7 +10,7 @@ import (
 )
 
 // generatedFile is written by `go generate` (see gen.go) and blank-imports
-// every slice package so that each one registers itself with the agent.
+// every slice package so that each one registers itself with the app.
 const generatedFile = "slices_gen.go"
 
 func TestGeneratedFileImportsEverySliceDirectory(t *testing.T) {
