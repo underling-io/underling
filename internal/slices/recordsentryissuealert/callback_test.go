@@ -97,9 +97,15 @@ func newStore(t *testing.T) *eventstore.Store {
 	return s
 }
 
-// newMux registers the slice's route on a fresh mux backed by store.
-func newMux(store *eventstore.Store) *http.ServeMux {
-	sc := recordsentryissuealert.New(secret, slog.New(slog.DiscardHandler))
+// newMux registers the slice's route on a fresh mux backed by store. The
+// slice reads secret from its env, so a signed request is accepted only if
+// that secret is the key it verifies with.
+func newMux(t *testing.T, store *eventstore.Store) *http.ServeMux {
+	t.Helper()
+	sc, err := recordsentryissuealert.New(env(map[string]string{"SENTRY_CLIENT_SECRET": secret}), slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("new slice: %v", err)
+	}
 	mux := http.NewServeMux()
 	mux.Handle(sc.Pattern, sc.Handler(store))
 	return mux
@@ -159,7 +165,7 @@ func assertStored(t *testing.T, s *eventstore.Store, want int) {
 func TestValidAlertIsRecorded(t *testing.T) {
 	s := newStore(t)
 
-	rec := post(newMux(s), signed(eventAlertFixture))
+	rec := post(newMux(t, s), signed(eventAlertFixture))
 
 	assertStatus(t, rec, http.StatusOK)
 	stored := storedEvents(t, s)
@@ -206,7 +212,7 @@ func TestBadSignatureIsUnauthorizedAndStoresNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := newStore(t)
 
-			rec := post(newMux(s), request{body: body, resource: "event_alert", signature: signature})
+			rec := post(newMux(t, s), request{body: body, resource: "event_alert", signature: signature})
 
 			assertStatus(t, rec, http.StatusUnauthorized)
 			assertStored(t, s, 0)
@@ -221,7 +227,7 @@ func TestOtherResourcesAreAcknowledgedAndStoreNothing(t *testing.T) {
 			r := signed(eventAlertFixture)
 			r.resource = resource
 
-			rec := post(newMux(s), r)
+			rec := post(newMux(t, s), r)
 
 			assertStatus(t, rec, http.StatusOK)
 			assertStored(t, s, 0)
@@ -231,7 +237,7 @@ func TestOtherResourcesAreAcknowledgedAndStoreNothing(t *testing.T) {
 
 func TestRedeliveredAlertIsStoredOnce(t *testing.T) {
 	s := newStore(t)
-	mux := newMux(s)
+	mux := newMux(t, s)
 
 	first := post(mux, signed(alert(t, "event-1", "rule-a")))
 	second := post(mux, signed(alert(t, "event-1", "rule-a")))
@@ -243,7 +249,7 @@ func TestRedeliveredAlertIsStoredOnce(t *testing.T) {
 
 func TestSameEventTriggeringAnotherRuleIsANewAlert(t *testing.T) {
 	s := newStore(t)
-	mux := newMux(s)
+	mux := newMux(t, s)
 
 	assertStatus(t, post(mux, signed(alert(t, "event-1", "rule-a"))), http.StatusOK)
 	assertStatus(t, post(mux, signed(alert(t, "event-1", "rule-b"))), http.StatusOK)
@@ -254,7 +260,7 @@ func TestSameEventTriggeringAnotherRuleIsANewAlert(t *testing.T) {
 func TestIDsAreStoredAsSent(t *testing.T) {
 	s := newStore(t)
 
-	assertStatus(t, post(newMux(s), signed(alert(t, " event-1 ", " rule-a "))), http.StatusOK)
+	assertStatus(t, post(newMux(t, s), signed(alert(t, " event-1 ", " rule-a "))), http.StatusOK)
 
 	var got events.SentryIssueAlertReceived
 	if err := json.Unmarshal(storedEvents(t, s)[0].Payload, &got); err != nil {
@@ -287,7 +293,7 @@ func TestInvalidAlertIsBadRequestAndStoresNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := newStore(t)
 
-			rec := post(newMux(s), signed(body))
+			rec := post(newMux(t, s), signed(body))
 
 			assertStatus(t, rec, http.StatusBadRequest)
 			assertStored(t, s, 0)
@@ -299,7 +305,7 @@ func TestOversizedBodyIsRejectedAndStoresNothing(t *testing.T) {
 	s := newStore(t)
 	body := `{"data":{"event":{"event_id":"e1","issue_id":"1","title":"` + strings.Repeat("x", 10<<20) + `"},"triggered_rule":"rule-a"}}`
 
-	rec := post(newMux(s), signed(body))
+	rec := post(newMux(t, s), signed(body))
 
 	assertStatus(t, rec, http.StatusRequestEntityTooLarge)
 	assertStored(t, s, 0)
@@ -307,7 +313,7 @@ func TestOversizedBodyIsRejectedAndStoresNothing(t *testing.T) {
 
 func TestStoreFailureIsInternalErrorWithoutDetails(t *testing.T) {
 	s := newStore(t)
-	mux := newMux(s)
+	mux := newMux(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}
@@ -323,7 +329,7 @@ func TestStoreFailureIsInternalErrorWithoutDetails(t *testing.T) {
 func TestSignatureIsCheckedBeforeDecoding(t *testing.T) {
 	s := newStore(t)
 
-	rec := post(newMux(s), request{body: `{"data":`, resource: "event_alert", signature: sign("other-secret", `{"data":`)})
+	rec := post(newMux(t, s), request{body: `{"data":`, resource: "event_alert", signature: sign("other-secret", `{"data":`)})
 
 	assertStatus(t, rec, http.StatusUnauthorized)
 }

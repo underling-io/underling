@@ -18,7 +18,8 @@ Two independent slices, linked by the `SentryIssueAlertReceived` event.
 | --- | --- | --- |
 | `POST /sentry/callback` (Sentry internal-integration webhook) | Record Sentry issue alert | `SentryIssueAlertReceived` |
 
-The slice also loads the client secret from `SENTRY_CLIENT_SECRET`.
+The slice's constructor loads the client secret from `SENTRY_CLIENT_SECRET` and
+fails if it is missing or empty.
 
 The command runs these checks in order:
 
@@ -78,8 +79,13 @@ key, so it must never change.
     `eventhandler.Handler`.
 
   Add it to the matching list in the `agent.Slices` that
-  `cmd/heinzel/main.go` passes to `agent.Run`. `main` also reads the slice's
-  config.
+  `cmd/heinzel/main.go` passes to `agent.Run`.
+- A slice loads its own config inside its constructor. A slice with config
+  takes the env lookup as its first argument and also returns an error, e.g.
+  `New(getenv func(string) string, …) (agent.StateChange, error)`. It reads its
+  settings from the lookup it's given and returns an error if they are invalid.
+  `main` passes `os.Getenv` and exits on the error, so it never knows a slice's
+  settings. A slice with no config keeps the plain constructor.
 - A slice may import only the stdlib, its own package, `internal/events`,
   `internal/eventstore`, `internal/eventhandler` and `internal/agent`. It never
   imports another slice or a shared helper package.

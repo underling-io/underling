@@ -31,14 +31,14 @@ func run() int {
 		logger.Error("invalid arguments", "error", err)
 		return 2
 	}
-	sentrySecret, err := recordsentryissuealert.SecretFromEnv(os.Getenv)
+	recordAlert, err := recordsentryissuealert.New(os.Getenv, logger)
 	if err != nil {
 		logger.Error("invalid configuration", "error", err)
 		return 2
 	}
 	slices := agent.Slices{
 		StateChanges: []agent.StateChange{
-			recordsentryissuealert.New(sentrySecret, logger),
+			recordAlert,
 		},
 		Automations: []agent.Automation{
 			handlesentryissuealert.New(logger),
