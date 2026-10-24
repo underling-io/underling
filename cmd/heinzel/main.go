@@ -36,9 +36,13 @@ func run() int {
 		logger.Error("invalid configuration", "error", err)
 		return 2
 	}
-	slices := []agent.Slice{
-		recordsentryissuealert.New(sentrySecret, logger),
-		handlesentryissuealert.New(logger),
+	slices := agent.Slices{
+		StateChanges: []agent.StateChange{
+			recordsentryissuealert.New(sentrySecret, logger),
+		},
+		Automations: []agent.Automation{
+			handlesentryissuealert.New(logger),
+		},
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

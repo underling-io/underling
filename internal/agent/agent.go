@@ -1,5 +1,6 @@
-// Package agent wires the event store, the slices' HTTP routes and their
-// event handlers together and owns their lifecycle.
+// Package agent wires the event store, the state-change slices' HTTP routes
+// and the automation slices' event handlers together and owns their
+// lifecycle.
 package agent
 
 import (
@@ -16,27 +17,39 @@ import (
 
 const readHeaderTimeout = 10 * time.Second
 
-// Slice is one vertical slice. It registers zero or more HTTP routes on mux,
-// may append to store from them, and returns zero or more event handlers to
-// run.
-type Slice func(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handler
+// StateChange is a state-change slice: one HTTP route that may append to the
+// store. Handler is called once at startup to build the route's handler.
+type StateChange struct {
+	Pattern string
+	Handler func(store *eventstore.Store) http.Handler
+}
 
-// Run serves the slices' routes on ln until ctx is cancelled, then shuts
-// down in order: it drains HTTP requests (forcing them closed after cfg.ShutdownTimeout),
-// stops the event handlers, and closes the store. Every step runs even if an
-// earlier one failed; the first error is returned.
-func Run(ctx context.Context, cfg Config, ln net.Listener, slices []Slice, logger *slog.Logger) error {
+// Automation is an automation slice: an event handler that reacts to stored
+// events.
+type Automation = eventhandler.Handler
+
+// Slices is every slice the agent runs, grouped by kind.
+type Slices struct {
+	StateChanges []StateChange
+	Automations  []Automation
+}
+
+// Run serves the state changes' routes on ln and runs the automations until
+// ctx is cancelled, then shuts down in order: it drains HTTP requests
+// (forcing them closed after cfg.ShutdownTimeout), stops the event handlers,
+// and closes the store. Every step runs even if an earlier one failed; the
+// first error is returned.
+func Run(ctx context.Context, cfg Config, ln net.Listener, slices Slices, logger *slog.Logger) error {
 	store, err := eventstore.Open(cfg.DataDir)
 	if err != nil {
 		_ = ln.Close()
 		return err
 	}
 	mux := http.NewServeMux()
-	var handlers []eventhandler.Handler
-	for _, register := range slices {
-		handlers = append(handlers, register(mux, store)...)
+	for _, sc := range slices.StateChanges {
+		mux.Handle(sc.Pattern, sc.Handler(store))
 	}
-	runner := eventhandler.Start(store, handlers, logger)
+	runner := eventhandler.Start(store, slices.Automations, logger)
 	srv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: readHeaderTimeout,

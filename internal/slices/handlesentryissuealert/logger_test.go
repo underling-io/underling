@@ -9,20 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/eventhandler"
+	"heinzel/internal/agent"
 	"heinzel/internal/eventstore"
 	"heinzel/internal/slices/handlesentryissuealert"
 )
 
-// alertLogger returns the slice's only handler, logging to buf. The nil mux
-// panics if the slice ever registers a route.
-func alertLogger(t *testing.T, buf *bytes.Buffer) eventhandler.Handler {
+// alertLogger returns the slice's automation, logging to buf.
+func alertLogger(t *testing.T, buf *bytes.Buffer) agent.Automation {
 	t.Helper()
-	handlers := handlesentryissuealert.New(slog.New(slog.NewJSONHandler(buf, nil)))(nil, nil)
-	if len(handlers) != 1 {
-		t.Fatalf("got %d handlers, want 1", len(handlers))
-	}
-	return handlers[0]
+	return handlesentryissuealert.New(slog.New(slog.NewJSONHandler(buf, nil)))
 }
 
 func logLines(t *testing.T, buf *bytes.Buffer) []map[string]any {

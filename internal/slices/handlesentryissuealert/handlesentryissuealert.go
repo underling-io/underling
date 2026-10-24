@@ -8,16 +8,11 @@ package handlesentryissuealert
 
 import (
 	"log/slog"
-	"net/http"
 
 	"heinzel/internal/agent"
-	"heinzel/internal/eventhandler"
-	"heinzel/internal/eventstore"
 )
 
-// New returns the slice. It registers no routes and runs one event handler.
-func New(logger *slog.Logger) agent.Slice {
-	return func(*http.ServeMux, *eventstore.Store) []eventhandler.Handler {
-		return []eventhandler.Handler{&alertLogger{logger: logger}}
-	}
+// New returns the slice, which logs each alert to logger.
+func New(logger *slog.Logger) agent.Automation {
+	return &alertLogger{logger: logger}
 }

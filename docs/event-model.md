@@ -2,7 +2,9 @@
 
 heinzel is organised as vertical slices, event-modeling style. A slice is
 either a **state change** (trigger → command → event) or an **automation**
-(event → reaction). Each slice is one package, `internal/slices/<slice>/`.
+(event → reaction). A state change is an `agent.StateChange` (one HTTP route);
+an automation is an `agent.Automation` (one event handler). Each slice is one
+package, `internal/slices/<slice>/`.
 Slices never import each other; they are coupled only through the events in
 `internal/events`.
 
@@ -16,8 +18,7 @@ Two independent slices, linked by the `SentryIssueAlertReceived` event.
 | --- | --- | --- |
 | `POST /sentry/callback` (Sentry internal-integration webhook) | Record Sentry issue alert | `SentryIssueAlertReceived` |
 
-The slice also loads the client secret from `SENTRY_CLIENT_SECRET`. It runs no
-event handlers.
+The slice also loads the client secret from `SENTRY_CLIENT_SECRET`.
 
 The command runs these checks in order:
 
@@ -61,18 +62,24 @@ placeholder. It holds `handler`, `position`, `issueId`, `title` and
 `sentryLevel`. The alert level is logged as `sentryLevel` because `level` is
 the log record's own level. The handler ignores all other event types. It logs
 a payload it cannot decode as an error and skips it. Its name is its checkpoint
-key, so it must never change. The slice registers no routes.
+key, so it must never change.
 
 ## Adding a slice
 
 - Put the slice in its own package, `internal/slices/<slice>/`, named after its
   command or automation (`record…`, `handle…`). One package holds exactly one
   slice: its route and command handling, or its event handler.
-- Expose a constructor that returns an `agent.Slice`:
-  `func(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handler`.
-  It registers zero or more routes on `mux` and returns zero or more handlers
-  to run. Pass it to `agent.Run` from `cmd/heinzel/main.go`, which also reads
-  the slice's config.
+- Expose a constructor for the slice's kind:
+  - A state change has `New(...) agent.StateChange`: a struct with the route's
+    `Pattern` (e.g. `POST /sentry/callback`) and a
+    `Handler func(store *eventstore.Store) http.Handler`, which the agent calls
+    once at startup.
+  - An automation has `New(...) agent.Automation`, an alias for
+    `eventhandler.Handler`.
+
+  Add it to the matching list in the `agent.Slices` that
+  `cmd/heinzel/main.go` passes to `agent.Run`. `main` also reads the slice's
+  config.
 - A slice may import only the stdlib, its own package, `internal/events`,
   `internal/eventstore`, `internal/eventhandler` and `internal/agent`. It never
   imports another slice or a shared helper package.

@@ -97,17 +97,12 @@ func newStore(t *testing.T) *eventstore.Store {
 	return s
 }
 
-// newMux registers the slice on a fresh mux backed by store.
+// newMux registers the slice's route on a fresh mux backed by store.
 func newMux(store *eventstore.Store) *http.ServeMux {
+	sc := recordsentryissuealert.New(secret, slog.New(slog.DiscardHandler))
 	mux := http.NewServeMux()
-	recordsentryissuealert.New(secret, slog.New(slog.DiscardHandler))(mux, store)
+	mux.Handle(sc.Pattern, sc.Handler(store))
 	return mux
-}
-
-func TestSliceRunsNoEventHandlers(t *testing.T) {
-	if handlers := recordsentryissuealert.New(secret, slog.New(slog.DiscardHandler))(http.NewServeMux(), newStore(t)); len(handlers) != 0 {
-		t.Fatalf("got %d handlers, want none", len(handlers))
-	}
 }
 
 type request struct {
