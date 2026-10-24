@@ -1,5 +1,5 @@
-// Package agent wires the event store, the command side and the event
-// handlers together and owns their lifecycle.
+// Package agent wires the event store, the features' HTTP routes and their
+// event handlers together and owns their lifecycle.
 package agent
 
 import (
@@ -10,27 +10,35 @@ import (
 	"net/http"
 	"time"
 
-	"heinzel/internal/command"
 	"heinzel/internal/eventhandler"
 	"heinzel/internal/eventstore"
-	"heinzel/internal/httpapi"
 )
 
 const readHeaderTimeout = 10 * time.Second
 
-// Run serves commands on ln until ctx is cancelled, then shuts down in order:
-// it drains HTTP requests (forcing them closed after cfg.ShutdownTimeout),
+// Feature is one feature package's slices. It registers its HTTP routes on
+// mux, may append to store from them, and returns the event handlers it needs
+// run.
+type Feature func(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handler
+
+// Run serves the features' routes on ln until ctx is cancelled, then shuts
+// down in order: it drains HTTP requests (forcing them closed after cfg.ShutdownTimeout),
 // stops the event handlers, and closes the store. Every step runs even if an
 // earlier one failed; the first error is returned.
-func Run(ctx context.Context, cfg Config, ln net.Listener, registry *command.Registry, handlers []eventhandler.Handler, logger *slog.Logger) error {
+func Run(ctx context.Context, cfg Config, ln net.Listener, features []Feature, logger *slog.Logger) error {
 	store, err := eventstore.Open(cfg.DataDir)
 	if err != nil {
 		_ = ln.Close()
 		return err
 	}
+	mux := http.NewServeMux()
+	var handlers []eventhandler.Handler
+	for _, register := range features {
+		handlers = append(handlers, register(mux, store)...)
+	}
 	runner := eventhandler.Start(store, handlers, logger)
 	srv := &http.Server{
-		Handler:           httpapi.NewHandler(registry, store, logger),
+		Handler:           mux,
 		ReadHeaderTimeout: readHeaderTimeout,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}

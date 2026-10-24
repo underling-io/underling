@@ -3,18 +3,17 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"heinzel/internal/agent"
-	"heinzel/internal/command"
 	"heinzel/internal/eventhandler"
 	"heinzel/internal/eventstore"
 )
@@ -44,7 +43,7 @@ func (l *notifyingListener) Close() error {
 	return l.Listener.Close()
 }
 
-func start(t *testing.T, cfg agent.Config, registry *command.Registry, handlers []eventhandler.Handler, logger *slog.Logger) *instance {
+func start(t *testing.T, cfg agent.Config, features []agent.Feature, logger *slog.Logger) *instance {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -53,7 +52,7 @@ func start(t *testing.T, cfg agent.Config, registry *command.Registry, handlers 
 	nl := &notifyingListener{Listener: ln, closed: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	inst := &instance{url: "http://" + ln.Addr().String(), cancel: cancel, done: make(chan error, 1), listenerClosed: nl.closed}
-	go func() { inst.done <- agent.Run(ctx, cfg, nl, registry, handlers, logger) }()
+	go func() { inst.done <- agent.Run(ctx, cfg, nl, features, logger) }()
 	return inst
 }
 
@@ -70,23 +69,78 @@ func (i *instance) stop(t *testing.T) error {
 	}
 }
 
-func (i *instance) post(t *testing.T, body string) (int, map[string]any) {
+// post sends an empty POST to path and returns the status and body.
+func (i *instance) post(t *testing.T, path string) (int, string) {
 	t.Helper()
-	resp, err := http.Post(i.url+"/commands", "application/json", strings.NewReader(body))
+	resp, err := http.Post(i.url+path, "text/plain", nil)
 	if err != nil {
 		t.Errorf("post: %v", err)
-		return 0, nil
+		return 0, ""
 	}
 	defer resp.Body.Close()
-	var decoded map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		t.Errorf("decode response: %v", err)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Errorf("read response: %v", err)
 	}
-	return resp.StatusCode, decoded
+	return resp.StatusCode, strings.TrimSpace(string(body))
 }
 
-func registerNote(id string) string {
-	return fmt.Sprintf(`{"type":"RegisterNote","payload":{"id":%q,"text":"hello"}}`, id)
+// appendEvent appends one TestEvent to a new stream and writes its position.
+func appendEvent(w http.ResponseWriter, store *eventstore.Store, stream string) {
+	_, position, err := store.Append(stream, 0, []eventstore.NewEvent{{Type: "TestEvent", Payload: json.RawMessage(`{}`)}})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_, _ = io.WriteString(w, strconv.FormatUint(position, 10))
+}
+
+// appender is a test feature serving POST /append/{stream}. It has no handlers.
+func appender(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handler {
+	mux.HandleFunc("POST /append/{stream}", func(w http.ResponseWriter, r *http.Request) {
+		appendEvent(w, store, r.PathValue("stream"))
+	})
+	return nil
+}
+
+// withHandlers is a test feature that only contributes handlers.
+func withHandlers(handlers ...eventhandler.Handler) agent.Feature {
+	return func(*http.ServeMux, *eventstore.Store) []eventhandler.Handler { return handlers }
+}
+
+// blocking is a test feature serving POST /block, which waits for release
+// before appending to stream "blocked".
+func blocking() (feature agent.Feature, entered chan struct{}, release chan struct{}) {
+	entered, release = make(chan struct{}, 1), make(chan struct{})
+	feature = func(mux *http.ServeMux, store *eventstore.Store) []eventhandler.Handler {
+		mux.HandleFunc("POST /block", func(w http.ResponseWriter, _ *http.Request) {
+			entered <- struct{}{}
+			<-release
+			appendEvent(w, store, "blocked")
+		})
+		return nil
+	}
+	return feature, entered, release
+}
+
+// recorder forwards every handled event's position to a channel.
+type recorder struct{ handled chan uint64 }
+
+func newRecorder() *recorder { return &recorder{handled: make(chan uint64, 100)} }
+
+func (*recorder) Name() string                { return "recorder" }
+func (r *recorder) Handle(e eventstore.Event) { r.handled <- e.Position }
+
+func (r *recorder) expect(t *testing.T, want uint64) {
+	t.Helper()
+	select {
+	case got := <-r.handled:
+		if got != want {
+			t.Fatalf("handled position %d, want %d", got, want)
+		}
+	case <-time.After(waitLimit):
+		t.Fatalf("timed out waiting for position %d", want)
+	}
 }
 
 // lineWriter forwards each log line to a channel.
@@ -97,69 +151,42 @@ func (w lineWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func nextLine(t *testing.T, lines lineWriter) map[string]any {
-	t.Helper()
-	select {
-	case line := <-lines:
-		var decoded map[string]any
-		if err := json.Unmarshal([]byte(line), &decoded); err != nil {
-			t.Fatalf("decode log line %q: %v", line, err)
-		}
-		return decoded
-	case <-time.After(waitLimit):
-		t.Fatal("timed out waiting for a log line")
-		return nil
-	}
-}
-
 func waitForLog(t *testing.T, lines lineWriter, msg string) {
 	t.Helper()
+	timeout := time.After(waitLimit)
 	for {
-		if nextLine(t, lines)["msg"] == msg {
-			return
+		select {
+		case line := <-lines:
+			var entry struct{ Msg string }
+			if err := json.Unmarshal([]byte(line), &entry); err == nil && entry.Msg == msg {
+				return
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for log %q", msg)
 		}
 	}
 }
 
-func TestRegisteredNoteIsLoggedOnceAcrossRestarts(t *testing.T) {
+func TestEventsAreHandledOnceAcrossRestarts(t *testing.T) {
 	cfg := agent.Config{DataDir: t.TempDir(), ShutdownTimeout: time.Second}
 
-	for run, id := range []string{"first", "second"} {
-		lines := make(lineWriter, 100)
-		logger := slog.New(slog.NewJSONHandler(lines, nil))
-		inst := start(t, cfg, command.DefaultRegistry(), []eventhandler.Handler{eventhandler.NewEventLogger(logger)}, discard())
+	for run, stream := range []string{"first", "second"} {
+		rec := newRecorder()
+		inst := start(t, cfg, []agent.Feature{appender, withHandlers(rec)}, discard())
 
-		code, body := inst.post(t, registerNote(id))
-		if code != http.StatusCreated {
-			t.Fatalf("run %d: got status %d (%v), want 201", run, code, body)
+		wantPosition := uint64(run + 1)
+		code, body := inst.post(t, "/append/"+stream)
+		if code != http.StatusOK || body != strconv.FormatUint(wantPosition, 10) {
+			t.Fatalf("run %d: got status %d body %q", run, code, body)
 		}
-		wantPosition := float64(run + 1)
-		if body["streamId"] != id || body["version"] != 1.0 || body["position"] != wantPosition {
-			t.Fatalf("run %d: got body %v", run, body)
-		}
-		line := nextLine(t, lines)
-		if line["streamId"] != id || line["position"] != wantPosition || line["handler"] != "event-logger" {
-			t.Fatalf("run %d: got log line %v", run, line)
-		}
+		rec.expect(t, wantPosition)
 		if err := inst.stop(t); err != nil {
 			t.Fatalf("run %d: %v", run, err)
 		}
-		if len(lines) != 0 {
-			t.Fatalf("run %d: unexpected extra log line %q", run, <-lines)
+		if len(rec.handled) != 0 {
+			t.Fatalf("run %d: unexpectedly handled position %d", run, <-rec.handled)
 		}
 	}
-}
-
-// blockingCommand registers a "Block" command that waits for release before
-// deciding to register a note on stream "blocked".
-func blockingCommand(registry *command.Registry) (entered chan struct{}, release chan struct{}) {
-	entered, release = make(chan struct{}, 1), make(chan struct{})
-	registry.Register("Block", func(context.Context, json.RawMessage) (command.Decision, error) {
-		entered <- struct{}{}
-		<-release
-		return command.RegisterNote(context.Background(), json.RawMessage(`{"id":"blocked","text":"late"}`))
-	})
-	return entered, release
 }
 
 // midEventHandler blocks while handling the first event it sees.
@@ -186,32 +213,31 @@ func (h *midEventHandler) Handle(e eventstore.Event) {
 func TestShutdownDrainsRequestsThenStopsHandlersThenClosesStore(t *testing.T) {
 	dir := t.TempDir()
 	cfg := agent.Config{DataDir: dir, ShutdownTimeout: waitLimit}
-	registry := command.DefaultRegistry()
-	commandEntered, releaseCommand := blockingCommand(registry)
+	block, requestEntered, releaseRequest := blocking()
 	handler := newMidEventHandler()
 	logs := make(lineWriter, 100)
-	inst := start(t, cfg, registry, []eventhandler.Handler{handler}, slog.New(slog.NewJSONHandler(logs, nil)))
+	inst := start(t, cfg, []agent.Feature{appender, block, withHandlers(handler)}, slog.New(slog.NewJSONHandler(logs, nil)))
 
-	for _, id := range []string{"a", "b", "c"} {
-		if code, body := inst.post(t, registerNote(id)); code != http.StatusCreated {
-			t.Fatalf("register %s: got %d (%v)", id, code, body)
+	for _, stream := range []string{"a", "b", "c"} {
+		if code, body := inst.post(t, "/append/"+stream); code != http.StatusOK {
+			t.Fatalf("append %s: got %d (%s)", stream, code, body)
 		}
 	}
 	<-handler.entered // handler is now mid-event at position 1
 
 	inFlight := make(chan int, 1)
 	go func() {
-		code, _ := inst.post(t, `{"type":"Block","payload":{}}`)
+		code, _ := inst.post(t, "/block")
 		inFlight <- code
 	}()
-	<-commandEntered
+	<-requestEntered
 	inst.cancel()
 	inst.waitUntilListenerClosed(t)
 
 	assertNotDone(t, inst.done, "run returned before the in-flight request finished")
-	close(releaseCommand)
-	if code := <-inFlight; code != http.StatusCreated {
-		t.Fatalf("in-flight request: got status %d, want 201", code)
+	close(releaseRequest)
+	if code := <-inFlight; code != http.StatusOK {
+		t.Fatalf("in-flight request: got status %d, want 200", code)
 	}
 	waitForLog(t, logs, "stopping event handlers")
 	assertNotDone(t, inst.done, "run returned while a handler was mid-event")
@@ -237,7 +263,7 @@ func TestShutdownDrainsRequestsThenStopsHandlersThenClosesStore(t *testing.T) {
 
 	resumed := newMidEventHandler()
 	resumed.entered <- 0 // never block
-	inst = start(t, cfg, command.DefaultRegistry(), []eventhandler.Handler{resumed}, discard())
+	inst = start(t, cfg, []agent.Feature{withHandlers(resumed)}, discard())
 	for _, want := range []uint64{2, 3, 4} {
 		select {
 		case got := <-resumed.handled:
@@ -256,20 +282,19 @@ func TestShutdownDrainsRequestsThenStopsHandlersThenClosesStore(t *testing.T) {
 func TestShutdownCompletesWhenRequestOutlivesTimeout(t *testing.T) {
 	dir := t.TempDir()
 	cfg := agent.Config{DataDir: dir, ShutdownTimeout: 10 * time.Millisecond}
-	registry := command.DefaultRegistry()
-	commandEntered, releaseCommand := blockingCommand(registry)
-	inst := start(t, cfg, registry, nil, discard())
+	block, requestEntered, releaseRequest := blocking()
+	inst := start(t, cfg, []agent.Feature{block}, discard())
 
 	inFlight := make(chan struct{})
 	go func() {
 		defer close(inFlight)
-		resp, err := http.Post(inst.url+"/commands", "application/json", strings.NewReader(`{"type":"Block","payload":{}}`))
+		resp, err := http.Post(inst.url+"/block", "text/plain", nil)
 		if err == nil {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 		}
 	}()
-	<-commandEntered
+	<-requestEntered
 
 	_ = inst.stop(t) // must return although the request is still blocked
 
@@ -280,7 +305,7 @@ func TestShutdownCompletesWhenRequestOutlivesTimeout(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	close(releaseCommand)
+	close(releaseRequest)
 	<-inFlight
 }
 
@@ -292,7 +317,7 @@ func TestRunFailsWhenStoreCannotOpen(t *testing.T) {
 	}
 	defer held.Close()
 
-	inst := start(t, agent.Config{DataDir: dir, ShutdownTimeout: time.Second}, command.DefaultRegistry(), nil, discard())
+	inst := start(t, agent.Config{DataDir: dir, ShutdownTimeout: time.Second}, nil, discard())
 	select {
 	case err := <-inst.done:
 		if err == nil {

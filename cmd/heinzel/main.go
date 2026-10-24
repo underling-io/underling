@@ -12,8 +12,7 @@ import (
 	"syscall"
 
 	"heinzel/internal/agent"
-	"heinzel/internal/command"
-	"heinzel/internal/eventhandler"
+	"heinzel/internal/features/sentry"
 )
 
 func main() {
@@ -31,6 +30,12 @@ func run() int {
 		logger.Error("invalid arguments", "error", err)
 		return 2
 	}
+	sentrySecret, err := sentry.SecretFromEnv(os.Getenv)
+	if err != nil {
+		logger.Error("invalid configuration", "error", err)
+		return 2
+	}
+	features := []agent.Feature{sentry.New(sentrySecret, logger)}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -40,8 +45,7 @@ func run() int {
 		logger.Error("listen", "addr", cfg.Addr, "error", err)
 		return 1
 	}
-	handlers := []eventhandler.Handler{eventhandler.NewEventLogger(logger)}
-	if err := agent.Run(ctx, cfg, ln, command.DefaultRegistry(), handlers, logger); err != nil {
+	if err := agent.Run(ctx, cfg, ln, features, logger); err != nil {
 		logger.Error("agent stopped with error", "error", err)
 		return 1
 	}
