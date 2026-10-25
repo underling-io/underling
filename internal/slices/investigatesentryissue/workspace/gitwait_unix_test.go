@@ -1,6 +1,6 @@
 //go:build unix
 
-package investigatesentryissue
+package workspace
 
 import (
 	"context"

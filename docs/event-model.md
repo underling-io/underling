@@ -75,6 +75,13 @@ Claude's prompt and in pull requests, so they are capped: `culprit`,
 | --- | --- | --- |
 | `SentryIssueAlertReceived` | `sentry-issue-investigator`: clone the mapped GitHub repo, let headless Claude Code fix the issue, push and open a draft PR | `SentryIssueInvestigationStarted`, then `…PullRequestOpened`, `…NoChanges` or `…Failed`; or `…Skipped` |
 
+The steps below are the decision path in `investigator.go`, which reaches
+git, Claude and GitHub only through small interfaces. `infrastructure.go`
+implements them with the slice's sub-packages: `workspace` (the run dir,
+clone, mirror and git commands), `claude` (the sandboxed child, its settings
+and output) and `github` (the draft PR). `investigator_test.go` specifies
+each outcome as an in-memory given/when/then test.
+
 The handler's name is its checkpoint key, so it must never change. It ignores
 other event types, and logs and skips a payload it cannot decode. For each
 alert, in order:
@@ -373,9 +380,11 @@ from there, so the branch never runs the upstream repo's push CI.
   `_<os>`/`_<arch>` file suffixes apply), except `testdata` and names starting
   with `.` or `_`. `internal/slices/generated_test.go` fails until the
   generated file matches the directories.
-- A slice may import only the stdlib, its own package, `internal/events`,
-  `internal/eventstore`, `internal/eventhandler` and `internal/app`. It never
-  imports another slice or a shared helper package.
+- A slice may import only the stdlib, its own package and sub-packages,
+  `internal/events`, `internal/eventstore`, `internal/eventhandler` and
+  `internal/app`. It never imports another slice or a shared helper package.
+  A sub-package (say for git or HTTP mechanics) belongs to its slice and is
+  not a slice itself; it must not import its parent.
   `internal/slices/imports_test.go` enforces this.
 - Event contracts that another slice reads go in `internal/events`: a type-name
   constant and a payload struct, with no funcs or methods. Their JSON is

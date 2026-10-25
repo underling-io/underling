@@ -3,13 +3,14 @@ package investigatesentryissue
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"heinzel/internal/slices/investigatesentryissue/claude"
 )
 
 const (
@@ -49,7 +50,7 @@ type config struct {
 	timeout      time.Duration
 	maxAge       time.Duration
 	claudeBin    string
-	workDir      string // empty means defaultWorkDir()
+	workDir      string // empty means workspace.DefaultDir()
 	path         string // PATH handed to the claude child
 	// parentHome is heinzel's own HOME; empty if unset. Neither the
 	// child's file tools nor its sandboxed commands may read it.
@@ -191,28 +192,28 @@ func parsePaths(value string) ([]string, error) {
 func resolveReadPaths(cfg *config) error {
 	fileDenied := slices.DeleteFunc(append([]string{cfg.parentHome}, cfg.denyRead...), func(p string) bool { return p == "" })
 	for i, p := range fileDenied {
-		fileDenied[i] = resolvePath(p)
+		fileDenied[i] = claude.ResolvePath(p)
 	}
-	workDir := resolvePath(cfg.workDir)
+	workDir := claude.ResolvePath(cfg.workDir)
 	sandboxDenied := append(slices.Clone(fileDenied), workDir)
 
-	if d, ok := firstContaining(fileDenied, workDir); ok {
+	if d, ok := claude.FirstContaining(fileDenied, workDir); ok {
 		return fmt.Errorf("%s: %s lies under %s, which the child may not read (HOME or %s)", workDirEnvVar, cfg.workDir, d, denyReadEnvVar)
 	}
 	readable := []string{}
 	for _, dir := range cfg.pluginDirs {
-		p := resolvePath(dir)
+		p := claude.ResolvePath(dir)
 		for _, d := range sandboxDenied {
-			if within(p, d) || within(d, p) {
+			if claude.Within(p, d) || claude.Within(d, p) {
 				return fmt.Errorf("%s: plugin dir %s overlaps %s, which the child may not read (HOME, %s or %s); move the plugins elsewhere", pluginDirsEnvVar, dir, d, denyReadEnvVar, workDirEnvVar)
 			}
 		}
 		readable = append(readable, p)
 	}
-	if bin, ok := lookPath(cfg.claudeBin, cfg.path); ok {
-		binDir := filepath.Dir(resolvePath(bin))
+	if bin, ok := claude.LookPath(cfg.claudeBin, cfg.path); ok {
+		binDir := filepath.Dir(claude.ResolvePath(bin))
 		for _, d := range sandboxDenied {
-			if within(d, binDir) {
+			if claude.Within(d, binDir) {
 				return fmt.Errorf("%s: %s lies in %s, which holds %s, a path the child may not read", claudeBinEnvVar, cfg.claudeBin, binDir, d)
 			}
 		}
@@ -232,64 +233,24 @@ type deniedPathDir struct {
 // no allowRead entry re-opens. Sandboxed commands can't run tools from
 // them. cfg.workDir and cfg.readable must be set.
 func deniedPathDirs(cfg config) []deniedPathDir {
-	denied := withResolved(append([]string{cfg.parentHome, cfg.workDir}, cfg.denyRead...))
+	denied := claude.WithResolved(append([]string{cfg.parentHome, cfg.workDir}, cfg.denyRead...))
 	var found []deniedPathDir
 	for _, dir := range filepath.SplitList(cfg.path) {
 		if dir == "" {
 			continue
 		}
-		forms := withResolved([]string{filepath.Clean(dir)})
-		if slices.ContainsFunc(forms, func(f string) bool { _, ok := firstContaining(cfg.readable, f); return ok }) {
+		forms := claude.WithResolved([]string{filepath.Clean(dir)})
+		if slices.ContainsFunc(forms, func(f string) bool { _, ok := claude.FirstContaining(cfg.readable, f); return ok }) {
 			continue
 		}
 		for _, f := range forms {
-			if d, ok := firstContaining(denied, f); ok {
+			if d, ok := claude.FirstContaining(denied, f); ok {
 				found = append(found, deniedPathDir{dir: dir, denied: d})
 				break
 			}
 		}
 	}
 	return found
-}
-
-// resolvePath returns path with symlinks resolved, or just cleaned if it
-// can't be resolved (e.g. it doesn't exist).
-func resolvePath(path string) string {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return resolved
-	}
-	return filepath.Clean(path)
-}
-
-// within reports whether path is root or lies under it.
-func within(path, root string) bool {
-	rel, err := filepath.Rel(root, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-// firstContaining returns the first of roots that path lies within.
-func firstContaining(roots []string, path string) (string, bool) {
-	for _, r := range roots {
-		if within(path, r) {
-			return r, true
-		}
-	}
-	return "", false
-}
-
-// lookPath finds bin as the child would: as given if it holds a path
-// separator, otherwise in the dirs of path.
-func lookPath(bin, path string) (string, bool) {
-	if strings.ContainsAny(bin, "/"+string(filepath.Separator)) {
-		return bin, true
-	}
-	for _, dir := range filepath.SplitList(path) {
-		candidate := filepath.Join(dir, bin)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && filepath.IsAbs(candidate) {
-			return candidate, true
-		}
-	}
-	return "", false
 }
 
 // parseDuration parses a positive Go duration, or returns def for "".

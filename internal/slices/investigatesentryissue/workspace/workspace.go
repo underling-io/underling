@@ -1,4 +1,7 @@
-package investigatesentryissue
+// Package workspace holds the git side of an investigation run: a run dir
+// with a mirror of the GitHub repo and a clone for Claude to work in, and
+// the git commands that inspect Claude's commits and push them.
+package workspace
 
 import (
 	"context"
@@ -24,37 +27,39 @@ const (
 	gitWaitDelay      = 10 * time.Second
 	gitLowSpeedLimit  = "1000" // bytes per second
 	gitLowSpeedTime   = "60"   // seconds
+
+	defaultDirName = "heinzel-investigations"
 )
 
-// workspace is the per-run directory layout, all under one temp run dir:
+// Workspace is the per-run directory layout, all under one temp run dir:
 //
-//   - mirror: a bare clone of the GitHub repo. Only heinzel uses it, with the
+//   - Mirror: a bare clone of the GitHub repo. Only heinzel uses it, with the
 //     GitHub token, to clone from and to push from.
-//   - clone: a clone of the mirror on the investigation branch, where Claude
+//   - Clone: a clone of the mirror on the investigation branch, where Claude
 //     works. It never holds the token or a GitHub remote.
-//   - home and claudeConfig: the child's HOME and CLAUDE_CONFIG_DIR.
-//   - gitHome: the HOME of heinzel's own git commands. The child never
+//   - Home and ClaudeConfig: the child's HOME and CLAUDE_CONFIG_DIR.
+//   - GitHome: the HOME of heinzel's own git commands. The child never
 //     sees it and can't write to it, so it can't plant git config (such as
 //     url.<x>.insteadOf) that heinzel's push with the token would honour.
 //
 // Pushing from the mirror rather than the clone keeps Claude's edits to the
 // clone's .git (hooks, config, remotes) away from the token: heinzel only
 // fetches the branch's commits out of the clone.
-type workspace struct {
-	workDir string // the work dir, symlinks resolved
-	// siblings are the other entries in the work dir when the run began,
+type Workspace struct {
+	WorkDir string // the work dir, symlinks resolved
+	// Siblings are the other entries in the work dir when the run began,
 	// such as leftovers of earlier runs.
-	siblings      []string
-	runDir        string
-	mirror        string
-	clone         string
-	home          string
-	claudeConfig  string
-	gitHome       string
-	branch        string
-	defaultBranch string
+	Siblings      []string
+	RunDir        string
+	Mirror        string
+	Clone         string
+	Home          string
+	ClaudeConfig  string
+	GitHome       string
+	Branch        string
+	DefaultBranch string
 	base          string // the default branch's commit the branch starts from
-	// branchGone is set by strayBranches when the clone no longer has the
+	// branchGone is set by StrayBranches when the clone no longer has the
 	// branch.
 	branchGone bool
 	git        gitRunner
@@ -101,14 +106,15 @@ func subcommand(args []string) string {
 	return ""
 }
 
-// newWorkspace creates a run dir under workDir, mirrors cloneURL into it and
-// checks out branch from the default branch in a clone of the mirror. On
-// error it removes what it created.
-func newWorkspace(ctx context.Context, workDir, cloneURL, branch string, cfg config) (_ *workspace, err error) {
+// New creates a run dir under workDir, mirrors cloneURL into it and checks
+// out branch from the default branch in a clone of the mirror. Git runs
+// with path as its PATH, and with token for the commands that talk to
+// GitHub. On error it removes what it created.
+func New(ctx context.Context, workDir, cloneURL, branch, path, token string) (_ *Workspace, err error) {
 	if err := os.MkdirAll(workDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create work dir: %w", err)
 	}
-	if err := checkWorkDir(workDir); err != nil {
+	if err := CheckDir(workDir); err != nil {
 		return nil, err
 	}
 	created, err := os.MkdirTemp(workDir, "heinzel-investigation-*")
@@ -126,44 +132,44 @@ func newWorkspace(ctx context.Context, workDir, cloneURL, branch string, cfg con
 	if err != nil {
 		return nil, err
 	}
-	ws := &workspace{
-		workDir:      filepath.Dir(runDir),
-		runDir:       runDir,
-		mirror:       filepath.Join(runDir, "mirror.git"),
-		clone:        filepath.Join(runDir, "repo"),
-		home:         filepath.Join(runDir, "home"),
-		claudeConfig: filepath.Join(runDir, "claude-config"),
-		gitHome:      filepath.Join(runDir, "git-home"),
-		branch:       branch,
+	ws := &Workspace{
+		WorkDir:      filepath.Dir(runDir),
+		RunDir:       runDir,
+		Mirror:       filepath.Join(runDir, "mirror.git"),
+		Clone:        filepath.Join(runDir, "repo"),
+		Home:         filepath.Join(runDir, "home"),
+		ClaudeConfig: filepath.Join(runDir, "claude-config"),
+		GitHome:      filepath.Join(runDir, "git-home"),
+		Branch:       branch,
 	}
-	entries, err := os.ReadDir(ws.workDir)
+	entries, err := os.ReadDir(ws.WorkDir)
 	if err != nil {
 		return nil, err
 	}
 	for _, e := range entries {
 		if e.Name() != filepath.Base(runDir) {
-			ws.siblings = append(ws.siblings, filepath.Join(ws.workDir, e.Name()))
+			ws.Siblings = append(ws.Siblings, filepath.Join(ws.WorkDir, e.Name()))
 		}
 	}
-	ws.git = newGitRunner(cfg.path, ws.gitHome, cfg.githubToken)
-	for _, dir := range []string{ws.home, ws.claudeConfig, ws.gitHome} {
+	ws.git = newGitRunner(path, ws.GitHome, token)
+	for _, dir := range []string{ws.Home, ws.ClaudeConfig, ws.GitHome} {
 		if err := os.Mkdir(dir, 0o700); err != nil {
 			return nil, err
 		}
 	}
 	g := ws.git
-	if _, err := g.run(ctx, runDir, true, "clone", "--quiet", "--bare", cloneURL, ws.mirror); err != nil {
+	if _, err := g.run(ctx, runDir, true, "clone", "--quiet", "--bare", cloneURL, ws.Mirror); err != nil {
 		return nil, err
 	}
-	if ws.defaultBranch, err = g.run(ctx, ws.mirror, false, "symbolic-ref", "--short", "HEAD"); err != nil {
+	if ws.DefaultBranch, err = g.run(ctx, ws.Mirror, false, "symbolic-ref", "--short", "HEAD"); err != nil {
 		return nil, err
 	}
-	if ws.base, err = g.run(ctx, ws.mirror, false, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
+	if ws.base, err = g.run(ctx, ws.Mirror, false, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
 		return nil, err
 	}
 	// --no-hardlinks: Claude may chmod and rewrite the clone's object files,
 	// which must not change the mirror's.
-	if _, err := g.run(ctx, runDir, false, "clone", "--quiet", "--no-hardlinks", ws.mirror, ws.clone); err != nil {
+	if _, err := g.run(ctx, runDir, false, "clone", "--quiet", "--no-hardlinks", ws.Mirror, ws.Clone); err != nil {
 		return nil, err
 	}
 	for _, args := range [][]string{
@@ -172,16 +178,16 @@ func newWorkspace(ctx context.Context, workDir, cloneURL, branch string, cfg con
 		{"config", "commit.gpgsign", "false"},
 		{"checkout", "--quiet", "-b", branch},
 	} {
-		if _, err := g.run(ctx, ws.clone, false, args...); err != nil {
+		if _, err := g.run(ctx, ws.Clone, false, args...); err != nil {
 			return nil, err
 		}
 	}
 	return ws, nil
 }
 
-// remove deletes the run dir.
-func (ws *workspace) remove() error {
-	return removeTree(ws.runDir)
+// Remove deletes the run dir.
+func (ws *Workspace) Remove() error {
+	return removeTree(ws.RunDir)
 }
 
 // removeTree deletes dir and everything in it. It first makes every
@@ -207,34 +213,34 @@ func makeRemovable(dir string) {
 // cloneRefs is where the mirror keeps the clone's branches for inspection.
 const cloneRefs = "refs/heinzel/clone/"
 
-// strayBranches returns the clone's branches other than the investigation
+// StrayBranches returns the clone's branches other than the investigation
 // branch that hold commits neither the mirror nor the investigation branch
 // has: work Claude committed somewhere heinzel won't push. It also notes
 // whether the clone still has the investigation branch, which Claude may
 // have renamed or deleted.
-func (ws *workspace) strayBranches(ctx context.Context) ([]string, error) {
-	if _, err := ws.git.run(ctx, ws.mirror, false, "fetch", "--quiet", "--no-tags", ws.clone, "+refs/heads/*:"+cloneRefs+"*"); err != nil {
+func (ws *Workspace) StrayBranches(ctx context.Context) ([]string, error) {
+	if _, err := ws.git.run(ctx, ws.Mirror, false, "fetch", "--quiet", "--no-tags", ws.Clone, "+refs/heads/*:"+cloneRefs+"*"); err != nil {
 		return nil, err
 	}
-	out, err := ws.git.run(ctx, ws.mirror, false, "for-each-ref", "--format=%(refname)", cloneRefs)
+	out, err := ws.git.run(ctx, ws.Mirror, false, "for-each-ref", "--format=%(refname)", cloneRefs)
 	if err != nil {
 		return nil, err
 	}
 	refs := slices.DeleteFunc(strings.Split(out, "\n"), func(ref string) bool { return ref == "" })
-	ws.branchGone = !slices.Contains(refs, cloneRefs+ws.branch)
+	ws.branchGone = !slices.Contains(refs, cloneRefs+ws.Branch)
 	not := []string{"--not", "--branches"}
 	if !ws.branchGone {
-		not = append(not, cloneRefs+ws.branch)
+		not = append(not, cloneRefs+ws.Branch)
 	}
 	var stray []string
 	for _, ref := range refs {
 		name := strings.TrimPrefix(ref, cloneRefs)
-		if name == ws.branch {
+		if name == ws.Branch {
 			continue
 		}
 		// Commits that also reached the investigation branch are pushed
 		// with it, so they don't count.
-		count, err := ws.git.run(ctx, ws.mirror, false, append([]string{"rev-list", "--count", ref}, not...)...)
+		count, err := ws.git.run(ctx, ws.Mirror, false, append([]string{"rev-list", "--count", ref}, not...)...)
 		if err != nil {
 			return nil, err
 		}
@@ -245,28 +251,28 @@ func (ws *workspace) strayBranches(ctx context.Context) ([]string, error) {
 	return stray, nil
 }
 
-// newCommits fetches the branch from the clone into the mirror and counts
-// its commits on top of the base. It runs after strayBranches; a branch
+// NewCommits fetches the branch from the clone into the mirror and counts
+// its commits on top of the base. It runs after StrayBranches; a branch
 // that is gone from the clone has none.
-func (ws *workspace) newCommits(ctx context.Context) (int, error) {
+func (ws *Workspace) NewCommits(ctx context.Context) (int, error) {
 	if ws.branchGone {
 		return 0, nil
 	}
-	ref := "refs/heads/" + ws.branch
-	if _, err := ws.git.run(ctx, ws.mirror, false, "fetch", "--quiet", "--no-tags", ws.clone, "+"+ref+":"+ref); err != nil {
+	ref := "refs/heads/" + ws.Branch
+	if _, err := ws.git.run(ctx, ws.Mirror, false, "fetch", "--quiet", "--no-tags", ws.Clone, "+"+ref+":"+ref); err != nil {
 		return 0, err
 	}
-	out, err := ws.git.run(ctx, ws.mirror, false, "rev-list", "--count", ws.base+".."+ref)
+	out, err := ws.git.run(ctx, ws.Mirror, false, "rev-list", "--count", ws.base+".."+ref)
 	if err != nil {
 		return 0, err
 	}
 	return strconv.Atoi(out)
 }
 
-// changedPaths lists the paths the branch changes on top of the base,
-// renames listed as a deletion and an addition.
-func (ws *workspace) changedPaths(ctx context.Context) ([]string, error) {
-	out, err := ws.git.run(ctx, ws.mirror, false, "diff", "--name-only", "--no-renames", "-z", ws.base, "refs/heads/"+ws.branch)
+// ChangedPaths lists the paths the branch changes on top of the base,
+// renames listed as a deletion and an addition. It runs after NewCommits.
+func (ws *Workspace) ChangedPaths(ctx context.Context) ([]string, error) {
+	out, err := ws.git.run(ctx, ws.Mirror, false, "diff", "--name-only", "--no-renames", "-z", ws.base, "refs/heads/"+ws.Branch)
 	if err != nil {
 		return nil, err
 	}
@@ -279,32 +285,10 @@ func (ws *workspace) changedPaths(ctx context.Context) ([]string, error) {
 	return paths, nil
 }
 
-// ciConfigFiles and ciConfigDirs are the repo paths that CI services read
-// their pipeline definitions from.
-var (
-	ciConfigFiles = []string{".gitlab-ci.yml", "Jenkinsfile", "azure-pipelines.yml", ".travis.yml", "bitbucket-pipelines.yml"}
-	ciConfigDirs  = []string{".github/", ".circleci/", ".buildkite/"}
-)
-
-// ciConfigPath reports whether path is CI configuration. A pushed branch
-// that changes it could run a pipeline of Claude's making with the repo's
-// CI secrets.
-func ciConfigPath(path string) bool {
-	if slices.Contains(ciConfigFiles, path) {
-		return true
-	}
-	for _, dir := range ciConfigDirs {
-		if strings.HasPrefix(path, dir) {
-			return true
-		}
-	}
-	return false
-}
-
-// push pushes the branch from the mirror to GitHub, with hooks off.
-func (ws *workspace) push(ctx context.Context) error {
-	ref := "refs/heads/" + ws.branch
-	_, err := ws.git.run(ctx, ws.mirror, true, "-c", "core.hooksPath=/dev/null", "push", "--quiet", "--no-verify", "origin", ref+":"+ref)
+// Push pushes the branch from the mirror to GitHub, with hooks off.
+func (ws *Workspace) Push(ctx context.Context) error {
+	ref := "refs/heads/" + ws.Branch
+	_, err := ws.git.run(ctx, ws.Mirror, true, "-c", "core.hooksPath=/dev/null", "push", "--quiet", "--no-verify", "origin", ref+":"+ref)
 	return err
 }
 

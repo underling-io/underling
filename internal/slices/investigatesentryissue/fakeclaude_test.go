@@ -2,6 +2,7 @@ package investigatesentryissue_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,12 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
-
-	"heinzel/internal/slices/investigatesentryissue"
 )
 
 // The test binary doubles as a fake claude: the slice runs it as CLAUDE_BIN,
@@ -30,37 +27,6 @@ const (
 	// Fake modes.
 	modeHappy = "happy" // commit a file, then report success
 	modeNoop  = "noop"  // report success without committing
-	modeError = "error" // report an error result and exit 1
-	modeHang  = "hang"  // block until killed
-	// modeHostileGitConfig plants a .gitconfig in the child's HOME that
-	// redirects the GitHub remote, then commits like modeHappy.
-	modeHostileGitConfig = "hostile-gitconfig"
-	// modeOtherBranch commits on a branch of its own, as auto-task would
-	// in its own worktree.
-	modeOtherBranch = "other-branch"
-	otherBranch     = "claude-own"
-	// modeRenameBranch renames the investigation branch, then commits.
-	modeRenameBranch = "rename-branch"
-	renamedBranch    = "claude-renamed"
-	// modeDeleteBranch checks out the default branch, deletes the
-	// investigation branch and reports success without committing.
-	modeDeleteBranch = "delete-branch"
-	// modeHelperBranch commits on a helper branch, then fast-forwards the
-	// investigation branch to it and leaves the helper branch behind.
-	modeHelperBranch = "helper-branch"
-	// modeCIConfig commits a GitHub Actions workflow.
-	modeCIConfig = "ci-config"
-	// modeGrandchild starts a background process that holds stdout open,
-	// records its pid in fakeGrandchildFile, reports success without
-	// committing and exits.
-	modeGrandchild     = "grandchild"
-	fakeGrandchildFile = "fake-claude-grandchild"
-	// Every mode emits a system/init event matching its args, except that
-	// these modes distort it, then report success without committing.
-	modeInitMissing        = "init-missing"         // no init event
-	modeInitPermissionMode = "init-permission-mode" // another permission mode
-	modeInitPluginMissing  = "init-plugin-missing"  // only the first plugin loaded
-	modeInitPluginErrors   = "init-plugin-errors"   // a plugin error
 
 	fakeSummary = "Root cause: blooopy was never declared. Fix: declare it."
 )
@@ -80,7 +46,7 @@ type fakeCall struct {
 	// Prompt is what the fake read on stdin.
 	Prompt string `json:"prompt"`
 	// TokenFiles lists the files in the run dir that contain the GitHub
-	// token in any of its TokenForms.
+	// token in any of its tokenForms.
 	TokenFiles []string `json:"tokenFiles"`
 }
 
@@ -102,110 +68,22 @@ func fakeClaude() int {
 	if err != nil {
 		return fail("read stdin: %v", err)
 	}
-	call := fakeCall{Args: os.Args[1:], Env: os.Environ(), Dir: dir, Prompt: string(prompt), TokenFiles: filesContaining(runDir, investigatesentryissue.TokenForms(githubToken))}
+	call := fakeCall{Args: os.Args[1:], Env: os.Environ(), Dir: dir, Prompt: string(prompt), TokenFiles: filesContaining(runDir, tokenForms(githubToken))}
 	if err := appendCall(filepath.Join(workDir, fakeCallsFile), call); err != nil {
 		return fail("record call: %v", err)
 	}
 
-	m := strings.TrimSpace(string(mode))
-	emitInit(m, dir, os.Args[1:])
-	switch m {
+	emitInit(dir, os.Args[1:])
+	switch m := strings.TrimSpace(string(mode)); m {
 	case modeHappy:
 		if err := commitFix(dir, "fix.txt"); err != nil {
 			return fail("%v", err)
 		}
 		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": fakeSummary})
-	case modeInitMissing, modeInitPermissionMode, modeInitPluginMissing, modeInitPluginErrors:
-		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": "Nothing to fix."})
-	case modeHostileGitConfig:
-		// Redirect the GitHub remote through the child's HOME, which
-		// heinzel's own git must not read.
-		out, err := exec.Command("git", "config", "--file", filepath.Join(runDir, "mirror.git", "config"), "remote.origin.url").Output()
-		if err != nil {
-			return fail("read remote url: %v", err)
-		}
-		hostile := fmt.Sprintf("[url %q]\n\tinsteadOf = %s\n", filepath.Join(runDir, "nowhere.git"), strings.TrimSpace(string(out)))
-		if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".gitconfig"), []byte(hostile), 0o644); err != nil {
-			return fail("write gitconfig: %v", err)
-		}
-		if err := commitFix(dir, "fix.txt"); err != nil {
-			return fail("%v", err)
-		}
-		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": fakeSummary})
-	case modeGrandchild:
-		// Leave a process behind that holds stdout and stderr open.
-		sleeper := exec.Command("sleep", "60")
-		sleeper.Stdout, sleeper.Stderr = os.Stdout, os.Stderr
-		if err := sleeper.Start(); err != nil {
-			return fail("start grandchild: %v", err)
-		}
-		if err := os.WriteFile(filepath.Join(workDir, fakeGrandchildFile), []byte(strconv.Itoa(sleeper.Process.Pid)), 0o644); err != nil {
-			return fail("record grandchild: %v", err)
-		}
-		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": "Nothing to fix."})
-	case modeCIConfig:
-		if err := commitFix(dir, ".github/workflows/exfiltrate.yml"); err != nil {
-			return fail("%v", err)
-		}
-		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": fakeSummary})
-	case modeOtherBranch:
-		cmd := exec.Command("git", "checkout", "-q", "-b", otherBranch)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fail("git checkout: %v: %s", err, out)
-		}
-		if err := commitFix(dir, "fix.txt"); err != nil {
-			return fail("%v", err)
-		}
-		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": fakeSummary})
-	case modeRenameBranch:
-		if _, err := gitOutput(dir, "branch", "-m", renamedBranch); err != nil {
-			return fail("%v", err)
-		}
-		if err := commitFix(dir, "fix.txt"); err != nil {
-			return fail("%v", err)
-		}
-		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": fakeSummary})
-	case modeDeleteBranch:
-		investigation, err := gitOutput(dir, "rev-parse", "--abbrev-ref", "HEAD")
-		if err != nil {
-			return fail("%v", err)
-		}
-		for _, args := range [][]string{{"checkout", "-q", "main"}, {"branch", "-q", "-D", investigation}} {
-			if _, err := gitOutput(dir, args...); err != nil {
-				return fail("%v", err)
-			}
-		}
-		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": "Nothing to fix."})
-	case modeHelperBranch:
-		investigation, err := gitOutput(dir, "rev-parse", "--abbrev-ref", "HEAD")
-		if err != nil {
-			return fail("%v", err)
-		}
-		if _, err := gitOutput(dir, "checkout", "-q", "-b", otherBranch); err != nil {
-			return fail("%v", err)
-		}
-		if err := commitFix(dir, "fix.txt"); err != nil {
-			return fail("%v", err)
-		}
-		for _, args := range [][]string{{"checkout", "-q", investigation}, {"merge", "-q", "--ff-only", otherBranch}} {
-			if _, err := gitOutput(dir, args...); err != nil {
-				return fail("%v", err)
-			}
-		}
-		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": fakeSummary})
 	case modeNoop:
 		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": "Nothing to fix."})
-	case modeError:
-		emit(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "model refused"})
-		fmt.Fprintln(os.Stderr, "fake claude failed")
-		return 1
-	case modeHang:
-		for {
-			time.Sleep(time.Hour)
-		}
 	default:
-		return fail("unknown mode %q", mode)
+		return fail("unknown mode %q", m)
 	}
 	return 0
 }
@@ -230,39 +108,15 @@ func commitFix(dir, file string) error {
 	return nil
 }
 
-// gitOutput runs git in dir and returns its trimmed output.
-func gitOutput(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("git %v: %v: %s", args, err, out)
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// emitInit emits the system/init event claude would for args, as the init
-// failure modes distort it.
-func emitInit(mode, dir string, args []string) {
-	if mode == modeInitMissing {
-		return
-	}
+// emitInit emits the system/init event claude would for args.
+func emitInit(dir string, args []string) {
 	var plugins []map[string]string
 	for i, a := range args {
 		if a == "--plugin-dir" && i+1 < len(args) {
 			plugins = append(plugins, map[string]string{"name": filepath.Base(args[i+1]), "path": args[i+1]})
 		}
 	}
-	event := map[string]any{"type": "system", "subtype": "init", "cwd": dir, "permissionMode": "acceptEdits", "plugins": plugins}
-	switch mode {
-	case modeInitPermissionMode:
-		event["permissionMode"] = "default"
-	case modeInitPluginMissing:
-		event["plugins"] = plugins[:1]
-	case modeInitPluginErrors:
-		event["plugin_errors"] = []map[string]string{{"plugin": "auto-task", "type": "hooks", "message": "hooks.json is invalid"}}
-	}
-	emit(event)
+	emit(map[string]any{"type": "system", "subtype": "init", "cwd": dir, "permissionMode": "acceptEdits", "plugins": plugins})
 }
 
 func fail(format string, args ...any) int {
@@ -308,6 +162,16 @@ func checkSettings(args []string, clone string) error {
 		return fmt.Errorf("settings %s don't limit reads in %s to %s, %s and %s", args[i+1], workDir, clone, home, claudeConfig)
 	}
 	return nil
+}
+
+// tokenForms returns the forms in which token could leak to disk: raw, as
+// the base64 git's Authorization header carries, and as bare base64.
+func tokenForms(token string) []string {
+	return []string{
+		token,
+		base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token)),
+		base64.StdEncoding.EncodeToString([]byte(token)),
+	}
 }
 
 // filesContaining lists the files under root that contain any of needles.
