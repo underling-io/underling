@@ -11,9 +11,11 @@ use tokio::time::timeout;
 
 const WAIT_LIMIT: Duration = Duration::from_secs(10);
 
+/// The binary, configured with every required environment variable.
 fn heinzel() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_heinzel"));
     command
+        .env("SENTRY_CLIENT_SECRET", "cli-test-secret")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -58,6 +60,25 @@ async fn invalid_arguments_exit_two_with_a_json_log_line() {
         entry["error"].as_str().unwrap().contains("--nope"),
         "got {entry}"
     );
+    let status = timeout(WAIT_LIMIT, child.wait()).await.unwrap().unwrap();
+    assert_eq!(status.code(), Some(2));
+}
+
+#[tokio::test]
+async fn invalid_configuration_exits_two_with_a_json_log_line() {
+    let dir = TempDir::new().unwrap();
+    let mut child = heinzel()
+        .env_remove("SENTRY_CLIENT_SECRET")
+        .args(["--addr", "127.0.0.1:0", "--data-dir"])
+        .arg(dir.path())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stderr.take().unwrap()).lines();
+
+    let entry = wait_for_log(&mut lines, "invalid configuration").await;
+
+    assert_eq!(entry["level"], "ERROR");
+    assert_eq!(entry["error"], "SENTRY_CLIENT_SECRET must be set");
     let status = timeout(WAIT_LIMIT, child.wait()).await.unwrap().unwrap();
     assert_eq!(status.code(), Some(2));
 }

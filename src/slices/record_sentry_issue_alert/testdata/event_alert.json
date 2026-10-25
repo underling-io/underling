@@ -1,0 +1,43 @@
+{
+  "action": "triggered",
+  "installation": {"uuid": "a8e5d37a-696c-4c54-adb5-b3f28d64c7de"},
+  "data": {
+    "event": {
+      "_ref": 1293919,
+      "_ref_version": 2,
+      "contexts": {"browser": {"name": "Chrome", "type": "browser", "version": "75.0.3770"}},
+      "culprit": "?(runner)",
+      "datetime": "2019-08-19T20:58:37.391000Z",
+      "dist": null,
+      "event_id": "aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4",
+      "exception": {"values": [{"type": "ReferenceError", "value": "blooopy is not defined"}]},
+      "fingerprint": ["{{ default }}"],
+      "hashes": ["29f68ffe4ca9ad0b1e2b4f9a3ad0f4bc"],
+      "issue_url": "https://sentry.io/api/0/issues/1117540176/",
+      "issue_id": "1117540176",
+      "key_id": "667532",
+      "level": "error",
+      "location": "example.js",
+      "logger": "",
+      "message": "",
+      "metadata": {"filename": "example.js", "type": "ReferenceError", "value": "blooopy is not defined"},
+      "platform": "javascript",
+      "project": 1,
+      "received": 1566248777.677,
+      "release": null,
+      "request": {"url": "https://example.com"},
+      "sdk": {"name": "sentry.javascript.browser", "version": "5.5.0"},
+      "tags": [["browser", "Chrome 75.0.3770"], ["level", "error"]],
+      "time_spent": null,
+      "title": "ReferenceError: blooopy is not defined",
+      "type": "error",
+      "url": "https://sentry.io/api/0/projects/test-org/front-end/events/aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4/",
+      "user": {"ip_address": "162.218.85.90"},
+      "version": "7",
+      "web_url": "https://sentry.io/organizations/test-org/issues/1117540176/events/aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4/"
+    },
+    "triggered_rule": "Very Important Alert Rule!",
+    "issue_alert": {"title": "Very Important Alert Rule!", "settings": [{"name": "channel", "value": "#general"}]}
+  },
+  "actor": {"type": "application", "id": "sentry", "name": "Sentry"}
+}

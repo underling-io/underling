@@ -8,6 +8,7 @@
 
 pub mod app;
 pub mod eventhandler;
+pub mod events;
 pub mod eventstore;
 pub mod logging;
 pub mod slices;

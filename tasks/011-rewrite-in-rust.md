@@ -66,6 +66,6 @@ Rewrite heinzel in idiomatic Rust, with the same behaviour as the Go version: HT
 | #   | Task                                   | File                             | Status |
 | --- | -------------------------------------- | -------------------------------- | ------ |
 | 01  | Foundation: store, runner, app, wiring | 011.01-rust-foundation.md        | done |
-| 02  | Record Sentry issue alert slice        | 011.02-rust-record-sentry-alert.md | new    |
+| 02  | Record Sentry issue alert slice        | 011.02-rust-record-sentry-alert.md | done |
 | 03  | Investigate Sentry issue slice         | 011.03-rust-investigate-sentry-issue.md | new |
 | 04  | Cutover: e2e, build, docs, delete Go   | 011.04-rust-cutover.md           | new    |
