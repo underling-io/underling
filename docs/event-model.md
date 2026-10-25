@@ -48,40 +48,312 @@ The command runs these checks in order:
   "title": "ReferenceError: blooopy is not defined",
   "level": "error",
   "webUrl": "https://sentry.io/organizations/test-org/issues/1117540176/events/aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4/",
-  "triggeredRule": "Very Important Alert Rule!"
+  "triggeredRule": "Very Important Alert Rule!",
+  "culprit": "?(runner)",
+  "exceptionType": "ReferenceError",
+  "exceptionValue": "blooopy is not defined",
+  "frames": [
+    {"file": "example.js", "function": "runner", "line": 3}
+  ]
 }
 ```
 
-### Automation: handle Sentry issue alert (`internal/slices/handlesentryissuealert/`)
+`culprit`, `exceptionType`, `exceptionValue` and `frames` are optional and
+omitted when empty, so alerts stored before they existed still decode.
+`culprit` is `data.event.culprit`. The exception fields come from the last
+(outermost) entry of `data.event.exception.values`: its `type`, `value` and
+`stacktrace.frames[].{filename, function, lineno}`, in Sentry's order (oldest
+call first), keeping at most the last 50 frames. An exception of an unexpected
+shape drops these details but still records the alert. The details end up in
+Claude's prompt and in pull requests, so they are capped: `culprit`,
+`exceptionType` and `exceptionValue` at 2000 runes, each frame's `file` and
+`function` at 500.
 
-| Event | Reaction |
+### Automation: investigate Sentry issue (`internal/slices/investigatesentryissue/`)
+
+| Event | Reaction | Events |
+| --- | --- | --- |
+| `SentryIssueAlertReceived` | `sentry-issue-investigator`: clone the mapped GitHub repo, let headless Claude Code fix the issue, push and open a draft PR | `SentryIssueInvestigationStarted`, then `…PullRequestOpened`, `…NoChanges` or `…Failed`; or `…Skipped` |
+
+The handler's name is its checkpoint key, so it must never change. It ignores
+other event types, and logs and skips a payload it cannot decode. For each
+alert, in order:
+
+1. **Stale.** An alert stored more than `INVESTIGATION_MAX_AGE` before the
+   handler started (when heinzel built it at startup) is recorded as Skipped
+   `stale`. The first deploy therefore doesn't investigate past alerts, while
+   an alert stored after startup is never stale, however long a backlog of
+   runs delays it.
+2. **Unmapped.** An alert whose Sentry project id isn't in
+   `SENTRY_GITHUB_REPOS` is recorded as Skipped `unmapped`.
+3. **Started.** Otherwise Started is recorded with the repo and the branch
+   `heinzel/sentry-<issueId>`.
+4. **Clone.** heinzel makes a fresh run dir under `INVESTIGATION_WORK_DIR`,
+   bare-clones the repo into it as a mirror, and clones the mirror (without
+   hard links) into a work clone on the new branch, from the default branch.
+   The work clone has a local git identity (`heinzel`) so Claude can commit.
+   Clone, fetch and push time out after 10 minutes, every other git command
+   after 1 minute, and transfers to GitHub abort below 1000 bytes/s for 60
+   seconds. A timed-out command's output is read for at most 10 more
+   seconds, so a helper it left holding the pipes (say `git-remote-https`)
+   can't hold the run up.
+5. **Claude.** heinzel runs `claude` in the work clone (see
+   [Isolation](#isolation)) with the prompt on stdin. The run succeeds when
+   the child exits 0, its `system/init` event shows the session started as
+   configured (permission mode `acceptEdits`, a plugin loaded from every
+   `CLAUDE_PLUGIN_DIRS` entry, no `plugin_errors`), and its last stream-json
+   event is a `result` with `is_error: false`; that event's `result` text is
+   Claude's summary. It is killed (with its process group) after
+   `INVESTIGATION_TIMEOUT`, or when heinzel shuts down. When it exits,
+   whatever it left running in its process group is killed too.
+6. **Commits.** heinzel fetches all of the work clone's branches into the
+   mirror. If a branch other than the investigation branch holds commits
+   that neither the mirror nor the investigation branch has (say auto-task
+   made its own branch and never merged it back, or Claude renamed the
+   investigation branch), the run fails as stage `claude` and names those
+   branches. Otherwise heinzel counts the branch's commits on top of the
+   default branch. None, or an investigation branch Claude deleted, means
+   NoChanges.
+7. **CI check.** If the branch changes CI configuration (anything under
+   `.github/`, `.circleci/` or `.buildkite/`, or `.gitlab-ci.yml`,
+   `Jenkinsfile`, `azure-pipelines.yml`, `.travis.yml` or
+   `bitbucket-pipelines.yml` at the repo root), heinzel doesn't push it: the
+   run fails as stage `push` with the reason "changes CI configuration".
+8. **Push and PR.** heinzel pushes the branch from the mirror with its own
+   token, then opens a draft PR against the default branch:
+   `POST /repos/{owner}/{repo}/pulls` with title
+   `Fix Sentry issue <issueId>: <alert title>` (at most 200 runes) and a body
+   that links the Sentry issue and holds Claude's summary (at most 60000
+   bytes in all; only the summary is cut, at a rune boundary, closing a
+   ```` ``` ```` or `~~~` code fence the cut leaves open with the same
+   characters, so the footer always survives). Every `@` in alert or Claude text gets a zero-width space after
+   it, so neither can @mention anyone. A non-201 answer is a failure.
+9. The run dir is always removed, read-only dirs in it included.
+
+Every investigation ends in one recorded outcome, and a failure never stops
+the handler or later alerts. Each outcome is logged as one line,
+`sentry issue investigation finished`, with `handler`, `issueId`, `outcome`
+(`pr_opened`, `no_changes`, `skipped` or `failed`) and `prUrl`, `reason` or
+`stage`. Runs go one at a time and block only this handler's loop.
+
+**One investigation per issue.** All events of an issue go on stream
+`sentry-issue-investigation-<issueId>` (the id as-is if it is
+`[A-Za-z0-9_-]+`, otherwise its hex sha256; the branch name uses the same
+key). The first event, Started or Skipped, is appended at expected version 0,
+so a repeated alert (a redelivery, or the rule firing again) hits a version
+conflict, is logged as `duplicate` and ignored, even across restarts. The
+outcome follows at expected version 1. Failed is final: there's no retry. If
+heinzel crashes mid-run, the issue stays Started and isn't retried.
+
+An alert the handler picks up after shutdown has begun (between the
+automation's context being cancelled and the event handlers stopping) gets
+no Started event and no investigation: it's logged and left unhandled, so
+it isn't marked Failed for good. The handler runner still checkpoints past
+it, though, so a restart doesn't pick it up again; only a later alert for
+the same issue (the rule firing again) starts the investigation.
+
+Event payloads (persisted, so the shapes are locked):
+
+| Event | Payload |
 | --- | --- |
-| `SentryIssueAlertReceived` | TBD; for now `sentry-issue-alert-logger` writes one structured log line |
+| `SentryIssueInvestigationStarted` | `{"issueId", "project", "repo": "owner/repo", "branch"}` |
+| `SentryIssueInvestigationPullRequestOpened` | `{"issueId", "prUrl"}` |
+| `SentryIssueInvestigationNoChanges` | `{"issueId"}` |
+| `SentryIssueInvestigationSkipped` | `{"issueId", "reason"}`, reason `unmapped` or `stale` |
+| `SentryIssueInvestigationFailed` | `{"issueId", "stage", "reason"}`, stage `clone`, `claude`, `timeout`, `push`, `pr` or `shutdown` |
 
-The real reaction is not defined yet. Until it is, the log line is a
-placeholder. It holds `handler`, `position`, `issueId`, `title` and
-`sentryLevel`. The alert level is logged as `sentryLevel` because `level` is
-the log record's own level. The handler ignores all other event types. It logs
-a payload it cannot decode as an error and skips it. Its name is its checkpoint
-key, so it must never change.
+#### Configuration
+
+The slice reads these when it is built. Any invalid value fails startup with
+"invalid configuration" (exit 2).
+
+| Variable | Required | Format | Default |
+| --- | --- | --- | --- |
+| `SENTRY_GITHUB_REPOS` | yes | `<projectId>=<owner>/<repo>`, comma-separated; ids are integers, each mapped once | |
+| `GITHUB_TOKEN` | yes | token that can push branches and open PRs on the mapped repos; must not have the `workflow` scope (see [CI](#ci)) | |
+| `ANTHROPIC_API_KEY` | yes | passed to the `claude` child | |
+| `OPENAI_API_KEY` | yes | passed to the `claude` child, for Codex | |
+| `CLAUDE_PLUGIN_DIRS` | yes | comma-separated plugin dirs (the Codex and auto-task plugins), each passed as `--plugin-dir` | |
+| `INVESTIGATION_TIMEOUT` | no | positive Go duration | `30m` |
+| `INVESTIGATION_MAX_AGE` | no | positive Go duration | `1h` |
+| `CLAUDE_BIN` | no | path or name of the `claude` executable | `claude` |
+| `INVESTIGATION_WORK_DIR` | no | directory for the per-run dirs, created (0700) if missing; the child may read only its own run's clone, HOME and Claude config dir in it | `heinzel-investigations-<uid>` in the OS temp dir (`heinzel-investigations` on Windows) |
+| `INVESTIGATION_DENY_READ` | no | comma-separated absolute paths the child may not read, such as heinzel's data dir | |
+
+heinzel's own `HOME` is also denied to the child. Neither the work dir nor a
+plugin dir may lie inside `HOME` or an `INVESTIGATION_DENY_READ` path, and no
+denied path (the work dir included) may lie inside a plugin dir or the dir of
+the `claude` binary; startup fails otherwise. So keep the plugins outside
+`HOME`, e.g. in `/opt/heinzel/plugins`.
+
+The same goes for tools on `PATH`: sandboxed commands can't run anything
+from a `PATH` entry that lies, as given or with symlinks resolved, inside
+`HOME`, an `INVESTIGATION_DENY_READ` path or the work dir, unless it is also
+inside a plugin dir or the `claude` binary's dir. Startup logs one warning
+per such entry ("tools there won't run inside the sandbox") but doesn't
+fail. Install `git`, `codex` and the like outside `HOME`, e.g. in
+`/usr/local/bin`.
+
+On Unix, the work dir must be a real directory (not a symlink), owned by
+heinzel's user, with no group or other permissions (`mode & 0o077 == 0`).
+If it already exists at startup and fails this check, startup fails with
+"invalid configuration". It is checked again at the start of each run;
+there a failure fails the run as stage `clone` and names the problem. This keeps another user of a shared temp dir from creating the
+dir first to read or plant run dirs. An existing dir is never chmodded.
+
+#### Host prerequisites
+
+The host (the binary ships as linux-arm64) needs on `PATH`:
+
+- `git`
+- `claude` (Claude Code; checked against 2.1.310)
+- `codex` (the Codex CLI, used by the Codex plugin)
+- on Linux, `bubblewrap` and `socat` for Claude Code's sandbox. The settings
+  set `sandbox.failIfUnavailable`, so a run fails rather than going
+  unsandboxed when they are missing.
+
+It also needs the Codex and auto-task plugins unpacked in the dirs named by
+`CLAUDE_PLUGIN_DIRS`, outside heinzel's `HOME`.
+
+Run heinzel as a dedicated OS user (or in a container) that owns nothing
+else. The sandbox narrows what the child can read and write, but the child
+still runs as heinzel's user.
+
+#### Isolation
+
+heinzel runs, in the work clone, with the prompt on stdin (`-p` reads it
+there when argv has none):
+
+```
+claude --bare -p --verbose --output-format stream-json --no-session-persistence \
+  --setting-sources "" --settings '<generated JSON>' \
+  --permission-mode acceptEdits --permission-prompts none \
+  --plugin-dir <each CLAUDE_PLUGIN_DIRS entry>
+```
+
+The run dir holds `repo` (the work clone), `home` and `claude-config` (the
+child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
+`HOME` of heinzel's own git commands).
+
+- **Environment.** The child's environment is exactly `PATH`, `HOME` and
+  `CLAUDE_CONFIG_DIR` (fresh, empty dirs in the run dir, outside the clone),
+  `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. It never sees `GITHUB_TOKEN`,
+  `SENTRY_CLIENT_SECRET` or any other variable of heinzel's.
+- **No ambient config.** `--bare` skips CLAUDE.md discovery, hooks, installed
+  plugins and MCP servers; `--setting-sources ""` loads no user, project or
+  local settings files, so the cloned repo's `.claude/` can't change the
+  run. Only the generated settings and the given plugins apply.
+- **Sandbox.** The generated settings are (`<run>` is the run dir, `<work>`
+  the work dir, both with symlinks resolved):
+
+  ```json
+  {
+    "permissions": {
+      "defaultMode": "acceptEdits",
+      "disableBypassPermissionsMode": "disable",
+      "deny": [
+        "Read(//proc/**)",
+        "Read(/<heinzel's HOME>/**)",
+        "Read(/<each INVESTIGATION_DENY_READ path>/**)",
+        "Read(/<each other entry in <work>>/**)",
+        "Read(/<run>/mirror.git/**)",
+        "Read(/<run>/git-home/**)"
+      ]
+    },
+    "sandbox": {
+      "enabled": true,
+      "failIfUnavailable": true,
+      "autoAllowBashIfSandboxed": true,
+      "allowUnsandboxedCommands": false,
+      "filesystem": {
+        "allowWrite": ["<run>/repo", "<run>/home"],
+        "denyRead": ["<heinzel's HOME>", "<each INVESTIGATION_DENY_READ path>", "<work>"],
+        "allowRead": ["<run>/repo", "<run>/home", "<run>/claude-config", "<each plugin dir>", "<dir of the claude binary>"]
+      },
+      "network": {"allowedDomains": ["api.openai.com"]}
+    }
+  }
+  ```
+
+  Shell commands run in the sandbox, which refuses to start unsandboxed and
+  never retries a command outside it. They may write only to the work clone
+  and the child's `HOME` (for Codex and tool caches; heinzel's git never uses
+  it), plus the sandbox's own per-user temp dir, which Claude Code always
+  allows, and reach only the OpenAI API, for Codex. They may not read
+  heinzel's `HOME`, the `INVESTIGATION_DENY_READ` paths or the work dir
+  (`HOME` and each `INVESTIGATION_DENY_READ` path are listed both as given
+  and, when it differs, with symlinks resolved, in `denyRead` and in the
+  `Read` deny rules alike); the
+  narrower `allowRead` entries re-open the clone, the child's `HOME` and
+  `CLAUDE_CONFIG_DIR` (shell snapshots, plugin data), the
+  plugin dirs and the claude binary's dir (a narrower allow wins over a
+  broader deny, never the other way round). Claude's file tools aren't
+  sandboxed: `Read` deny rules keep them out of the same places, and since
+  those rules can't be carved out, the work dir is denied piecemeal (every
+  entry but this run's dir, plus the mirror and `git-home` in it).
+  `acceptEdits` auto-approves edits only inside the working directory, and
+  with `--permission-prompts none` anything else that would prompt is
+  denied. Bypass mode is disabled. `-p` silently ignores invalid settings,
+  so heinzel checks the `system/init` event (see step 5); that event doesn't
+  report the sandbox itself.
+- **The prompt** starts with `/at:auto-task` (bare mode doesn't list skills,
+  so the command is named explicitly). It overrides auto-task's own setup:
+  every step runs in place in the current directory, with no git worktree
+  and no new or switched branch, committing only on the investigation
+  branch, and auto-task's ship and hand-off steps are skipped (no push,
+  merge, PR or `/at:ship-task`). It asks for a closing summary. The issue
+  details follow as JSON data (title capped at 2000 runes), marked as not
+  instructions.
+- **The token stays with heinzel.** git gets the token only through
+  `GIT_CONFIG_*` environment variables (`http.extraHeader`), never in argv, a
+  remote URL or a config file. Claude's clone has no GitHub remote and no
+  token. heinzel pushes from its own mirror, with hooks off, after fetching
+  only the clone's branches out of it, so changes Claude makes to the
+  clone's `.git` (hooks, config, remotes) never run with the token. heinzel's
+  git runs with its own `HOME` (`git-home`, which the child can neither read
+  nor write), `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, so a
+  `.gitconfig` Claude plants in its `HOME` (say a `url.<x>.insteadOf`)
+  doesn't reach the push.
+- **Accepted exposure.** Claude can read `OPENAI_API_KEY`, which Codex needs;
+  use a dedicated, low-limit key. The child runs as heinzel's OS user and
+  can read whatever that user can outside the denied paths, and could
+  inspect heinzel's processes; run heinzel as a dedicated user or in a
+  container.
+
+#### CI
+
+A branch heinzel pushes to the repo can trigger the repo's CI, which may run
+with the repo's secrets. heinzel refuses to push a branch that changes CI
+configuration (step 7), and `GITHUB_TOKEN` must not have the `workflow`
+scope, so GitHub itself rejects a push that touches `.github/workflows/`.
+The residual risk is build scripts that existing push-triggered CI runs
+(say a `Makefile` or `package.json` script Claude edited): they run with
+whatever secrets that CI exposes to pushes. Limit secrets to protected
+branches or environments. The follow-up is to push to a fork and open the PR
+from there, so the branch never runs the upstream repo's push CI.
 
 ## Adding a slice
 
 - Put the slice in its own package, `internal/slices/<slice>/`, named after its
-  command or automation (`record…`, `handle…`). One package holds exactly one
+  command or automation (`record…`, `investigate…`). One package holds exactly one
   slice: its route and command handling, or its event handler.
 - Expose a constructor for the slice's kind:
   - A state change has `New(...) app.StateChange`: a struct with the route's
     `Pattern` (e.g. `POST /sentry/callback`) and a
     `Handler func(store *eventstore.Store) http.Handler`, which the app calls
     once at startup.
-  - An automation has `New(...) app.Automation`, an alias for
-    `eventhandler.Handler`.
+  - An automation has `New(...) app.Automation`: a struct with a
+    `Handler func(ctx context.Context, store *eventstore.Store) eventhandler.Handler`,
+    which the app calls once at startup, after opening the store. `ctx` is
+    cancelled when shutdown begins, after HTTP requests drain and before the
+    event handlers are stopped, so a long-running `Handle` can abort.
 - A slice loads its own config inside its constructor. A slice with config
   takes the env lookup as its first argument and also returns an error, e.g.
   `New(getenv func(string) string, …) (app.StateChange, error)`. It reads its
   settings from the lookup it's given and returns an error if they are invalid.
-  A slice with no config keeps the plain constructor.
+  A slice with many dependencies may take a params struct holding `Getenv`
+  instead, like `investigatesentryissue.New(Params)`. A slice with no config
+  keeps the plain constructor.
 - Register the slice in an `init()` in its package, with a factory that calls
   `New` with what it needs from `app.Deps` (`Getenv`, `Logger`):
   `app.RegisterStateChange` for a state change, `app.RegisterAutomation`

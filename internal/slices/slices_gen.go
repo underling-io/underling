@@ -3,6 +3,6 @@
 package slices
 
 import (
-	_ "heinzel/internal/slices/handlesentryissuealert"
+	_ "heinzel/internal/slices/investigatesentryissue"
 	_ "heinzel/internal/slices/recordsentryissuealert"
 )

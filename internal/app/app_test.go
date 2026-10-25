@@ -170,7 +170,7 @@ func TestEventsAreHandledOnceAcrossRestarts(t *testing.T) {
 
 	for run, stream := range []string{"first", "second"} {
 		rec := newRecorder()
-		inst := start(t, cfg, app.Slices{StateChanges: []app.StateChange{appender}, Automations: []app.Automation{rec}}, discard())
+		inst := start(t, cfg, app.Slices{StateChanges: []app.StateChange{appender}, Automations: []app.Automation{automation(rec)}}, discard())
 
 		wantPosition := uint64(run + 1)
 		code, body := inst.post(t, "/append/"+stream)
@@ -214,7 +214,7 @@ func TestShutdownDrainsRequestsThenStopsHandlersThenClosesStore(t *testing.T) {
 	block, requestEntered, releaseRequest := blocking()
 	handler := newMidEventHandler()
 	logs := make(lineWriter, 100)
-	inst := start(t, cfg, app.Slices{StateChanges: []app.StateChange{appender, block}, Automations: []app.Automation{handler}}, slog.New(slog.NewJSONHandler(logs, nil)))
+	inst := start(t, cfg, app.Slices{StateChanges: []app.StateChange{appender, block}, Automations: []app.Automation{automation(handler)}}, slog.New(slog.NewJSONHandler(logs, nil)))
 
 	for _, stream := range []string{"a", "b", "c"} {
 		if code, body := inst.post(t, "/append/"+stream); code != http.StatusOK {
@@ -261,7 +261,7 @@ func TestShutdownDrainsRequestsThenStopsHandlersThenClosesStore(t *testing.T) {
 
 	resumed := newMidEventHandler()
 	resumed.entered <- 0 // never block
-	inst = start(t, cfg, app.Slices{Automations: []app.Automation{resumed}}, discard())
+	inst = start(t, cfg, app.Slices{Automations: []app.Automation{automation(resumed)}}, discard())
 	for _, want := range []uint64{2, 3, 4} {
 		select {
 		case got := <-resumed.handled:

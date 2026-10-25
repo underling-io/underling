@@ -18,7 +18,7 @@ func TestBuildKeepsRegistrationOrderWithinEachKind(t *testing.T) {
 	for _, name := range []string{"first", "second"} {
 		r.registerAutomation(func(Deps) (Automation, error) {
 			built = append(built, name)
-			return nil, nil
+			return Automation{}, nil
 		})
 	}
 
@@ -52,7 +52,7 @@ func TestBuildPassesDepsToFactories(t *testing.T) {
 	})
 	r.registerAutomation(func(d Deps) (Automation, error) {
 		seen = append(seen, d)
-		return nil, nil
+		return Automation{}, nil
 	})
 
 	if _, err := r.build(deps); err != nil {
@@ -81,7 +81,7 @@ func TestBuildReturnsFirstErrorUnwrappedAndStops(t *testing.T) {
 	})
 	r.registerAutomation(func(Deps) (Automation, error) {
 		laterCalled = true
-		return nil, errors.New("third")
+		return Automation{}, errors.New("third")
 	})
 
 	_, err := r.build(Deps{})

@@ -132,7 +132,14 @@ func (s *logSink) waitFor(t *testing.T, match func(map[string]any) bool) map[str
 // the app. Cleanup stops the app and requires a clean shutdown.
 func startApp(t *testing.T, logger *slog.Logger) *http.Client {
 	t.Helper()
-	env := map[string]string{"SENTRY_CLIENT_SECRET": e2eSecret}
+	env := map[string]string{
+		"SENTRY_CLIENT_SECRET": e2eSecret,
+		"SENTRY_GITHUB_REPOS":  "2=acme/web",
+		"GITHUB_TOKEN":         "e2e-github-token",
+		"ANTHROPIC_API_KEY":    "e2e-anthropic-key",
+		"OPENAI_API_KEY":       "e2e-openai-key",
+		"CLAUDE_PLUGIN_DIRS":   "/plugins/codex,/plugins/auto-task",
+	}
 	slices, err := app.Build(app.Deps{
 		Getenv: func(key string) string { return env[key] },
 		Logger: logger,
@@ -201,9 +208,13 @@ func TestSentryIssueAlertIsRecordedAndHandled(t *testing.T) {
 		t.Fatalf("got %d %s, want 200 {\"status\":\"recorded\"}", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 
+	// Project 1 is not in SENTRY_GITHUB_REPOS, so the investigator skips the
+	// issue without cloning, running claude or calling GitHub.
 	sink.waitFor(t, func(record map[string]any) bool {
-		return record["msg"] == "sentry issue alert received" &&
-			record["handler"] == "sentry-issue-alert-logger" &&
-			record["issueId"] == issueID
+		return record["msg"] == "sentry issue investigation finished" &&
+			record["handler"] == "sentry-issue-investigator" &&
+			record["issueId"] == issueID &&
+			record["outcome"] == "skipped" &&
+			record["reason"] == "unmapped"
 	})
 }

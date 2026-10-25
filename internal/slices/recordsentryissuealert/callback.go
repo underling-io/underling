@@ -34,6 +34,10 @@ type webhook struct {
 			Title   string `json:"title"`
 			Level   string `json:"level"`
 			WebURL  string `json:"web_url"`
+			Culprit string `json:"culprit"`
+			// Exception is decoded leniently by exceptionDetails, so an
+			// unexpected shape drops the details instead of the alert.
+			Exception json.RawMessage `json:"exception"`
 		} `json:"event"`
 		TriggeredRule string `json:"triggered_rule"`
 	} `json:"data"`
@@ -75,14 +79,19 @@ func (c *callback) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "event_id, issue_id and triggered_rule are required"})
 		return
 	}
+	exception := exceptionDetails(event.Exception)
 	payload, err := json.Marshal(events.SentryIssueAlertReceived{
-		EventID:       event.EventID,
-		IssueID:       event.IssueID,
-		Project:       event.Project,
-		Title:         event.Title,
-		Level:         event.Level,
-		WebURL:        event.WebURL,
-		TriggeredRule: hook.Data.TriggeredRule,
+		EventID:        event.EventID,
+		IssueID:        event.IssueID,
+		Project:        event.Project,
+		Title:          event.Title,
+		Level:          event.Level,
+		WebURL:         event.WebURL,
+		TriggeredRule:  hook.Data.TriggeredRule,
+		Culprit:        culprit(event.Culprit),
+		ExceptionType:  exception.Type,
+		ExceptionValue: exception.Value,
+		Frames:         exception.Frames,
 	})
 	if err != nil {
 		c.internalError(w, err)

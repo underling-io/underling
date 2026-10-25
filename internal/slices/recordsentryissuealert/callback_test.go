@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -182,13 +183,16 @@ func TestValidAlertIsRecorded(t *testing.T) {
 		t.Fatalf("decode payload: %v", err)
 	}
 	want := map[string]any{
-		"eventId":       "aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4",
-		"issueId":       "1117540176",
-		"project":       1.0,
-		"title":         "ReferenceError: blooopy is not defined",
-		"level":         "error",
-		"webUrl":        "https://sentry.io/organizations/test-org/issues/1117540176/events/aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4/",
-		"triggeredRule": "Very Important Alert Rule!",
+		"eventId":        "aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4",
+		"issueId":        "1117540176",
+		"project":        1.0,
+		"title":          "ReferenceError: blooopy is not defined",
+		"level":          "error",
+		"webUrl":         "https://sentry.io/organizations/test-org/issues/1117540176/events/aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4/",
+		"triggeredRule":  "Very Important Alert Rule!",
+		"culprit":        "?(runner)",
+		"exceptionType":  "ReferenceError",
+		"exceptionValue": "blooopy is not defined",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got payload %v, want %v", got, want)
@@ -332,4 +336,103 @@ func TestSignatureIsCheckedBeforeDecoding(t *testing.T) {
 	rec := post(newMux(t, s), request{body: `{"data":`, resource: "event_alert", signature: sign("other-secret", `{"data":`)})
 
 	assertStatus(t, rec, http.StatusUnauthorized)
+}
+
+// recordedPayload posts a signed alert whose event is event and returns the
+// stored payload as a generic map.
+func recordedPayload(t *testing.T, event map[string]any) map[string]any {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"data": map[string]any{"event": event, "triggered_rule": "rule-a"}})
+	if err != nil {
+		t.Fatalf("encode body: %v", err)
+	}
+	s := newStore(t)
+	assertStatus(t, post(newMux(t, s), signed(string(body))), http.StatusOK)
+	stored := storedEvents(t, s)
+	if len(stored) != 1 {
+		t.Fatalf("stored %d events, want 1", len(stored))
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stored[0].Payload, &got); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	return got
+}
+
+func TestExceptionDetailsComeFromTheOutermostExceptionAndKeepTheLast50Frames(t *testing.T) {
+	var frames []any
+	for i := 1; i <= 60; i++ {
+		frames = append(frames, map[string]any{"filename": fmt.Sprintf("f%d.go", i), "function": fmt.Sprintf("fn%d", i), "lineno": i, "in_app": true})
+	}
+	got := recordedPayload(t, map[string]any{
+		"event_id": "e1",
+		"issue_id": "1",
+		"culprit":  "app.handler",
+		"exception": map[string]any{"values": []any{
+			map[string]any{"type": "InnerError", "value": "cause", "stacktrace": map[string]any{"frames": []any{map[string]any{"filename": "inner.go", "function": "inner", "lineno": 1}}}},
+			map[string]any{"type": "OuterError", "value": "wrapped", "stacktrace": map[string]any{"frames": frames}},
+		}},
+	})
+
+	if got["culprit"] != "app.handler" || got["exceptionType"] != "OuterError" || got["exceptionValue"] != "wrapped" {
+		t.Fatalf("got payload %v, want culprit and the outermost exception", got)
+	}
+	gotFrames, _ := got["frames"].([]any)
+	if len(gotFrames) != 50 {
+		t.Fatalf("got %d frames, want 50", len(gotFrames))
+	}
+	first := map[string]any{"file": "f11.go", "function": "fn11", "line": 11.0}
+	last := map[string]any{"file": "f60.go", "function": "fn60", "line": 60.0}
+	if !reflect.DeepEqual(gotFrames[0], first) || !reflect.DeepEqual(gotFrames[49], last) {
+		t.Fatalf("got first frame %v and last %v, want %v and %v (Sentry's order, last 50 kept)", gotFrames[0], gotFrames[49], first, last)
+	}
+}
+
+func TestExceptionDetailsAreCappedInLength(t *testing.T) {
+	long := func(n int) string { return strings.Repeat("ü", n) }
+	got := recordedPayload(t, map[string]any{
+		"event_id": "e1",
+		"issue_id": "1",
+		"culprit":  long(2100),
+		"exception": map[string]any{"values": []any{map[string]any{
+			"type":       long(2100),
+			"value":      long(2100),
+			"stacktrace": map[string]any{"frames": []any{map[string]any{"filename": long(600), "function": long(600), "lineno": 1}}},
+		}}},
+	})
+
+	for field, want := range map[string]string{"culprit": long(2000), "exceptionType": long(2000), "exceptionValue": long(2000)} {
+		if got[field] != want {
+			t.Errorf("%s has %d runes, want 2000", field, len([]rune(fmt.Sprint(got[field]))))
+		}
+	}
+	frame := got["frames"].([]any)[0].(map[string]any)
+	if frame["file"] != long(500) || frame["function"] != long(500) {
+		t.Errorf("frame file and function have %d and %d runes, want 500", len([]rune(fmt.Sprint(frame["file"]))), len([]rune(fmt.Sprint(frame["function"]))))
+	}
+}
+
+func TestAlertWithoutExceptionDetailsHasOnlyTheOriginalFields(t *testing.T) {
+	got := recordedPayload(t, map[string]any{"event_id": "e1", "issue_id": "1", "project": 3, "title": "t", "level": "error", "web_url": "https://sentry.io/x"})
+
+	want := map[string]any{"eventId": "e1", "issueId": "1", "project": 3.0, "title": "t", "level": "error", "webUrl": "https://sentry.io/x", "triggeredRule": "rule-a"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got payload %v, want %v", got, want)
+	}
+}
+
+func TestMalformedExceptionDetailsAreDroppedNotRejected(t *testing.T) {
+	got := recordedPayload(t, map[string]any{"event_id": "e1", "issue_id": "1", "exception": map[string]any{"values": "not a list"}})
+
+	if _, ok := got["exceptionType"]; ok {
+		t.Fatalf("got payload %v, want no exception details", got)
+	}
+}
+
+func TestStoredAlertWithoutDetailsStillDecodes(t *testing.T) {
+	var got events.SentryIssueAlertReceived
+	old := `{"eventId":"e1","issueId":"1","project":1,"title":"t","level":"error","webUrl":"u","triggeredRule":"r"}`
+	if err := json.Unmarshal([]byte(old), &got); err != nil || got.IssueID != "1" || got.Frames != nil || got.Culprit != "" {
+		t.Fatalf("got %+v, %v; want the old payload to decode with empty details", got, err)
+	}
 }
