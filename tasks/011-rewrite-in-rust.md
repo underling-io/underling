@@ -55,12 +55,17 @@ Rewrite heinzel in idiomatic Rust, with the same behaviour as the Go version: HT
 - **Verification** for every sub-task: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`, plus the Go check (`go vet ./... && go test ./...`) until the Go code is deleted.
 - **Toolchain.** Rust is installed via Homebrew (no rustup), so extra targets can't be added here. Cross-compiling linux-arm64 is handled at cutover.
 - **Commits.** One squash commit per sub-task on main, as usual.
+- **Accepted deviations** (from 011.01):
+  - The JSON log envelope is tracing's: `timestamp`, `message` and `level` instead of slog's `time`, `msg` and `level`. Message strings and field names are unchanged. *To be confirmed by the user.*
+  - No single-dash flags (`-addr`); only `--addr` and friends.
+  - A bare `:port` binds IPv4 only (`0.0.0.0:port`), not dual-stack.
+  - Durations are parsed by humantime (`10s`, `30m`, `1h`, `1m30s`), so Go's fractional `1.5h` isn't accepted.
 
 ## Tasks
 
 | #   | Task                                   | File                             | Status |
 | --- | -------------------------------------- | -------------------------------- | ------ |
-| 01  | Foundation: store, runner, app, wiring | 011.01-rust-foundation.md        | ready-for-dev |
+| 01  | Foundation: store, runner, app, wiring | 011.01-rust-foundation.md        | done |
 | 02  | Record Sentry issue alert slice        | 011.02-rust-record-sentry-alert.md | new    |
 | 03  | Investigate Sentry issue slice         | 011.03-rust-investigate-sentry-issue.md | new |
 | 04  | Cutover: e2e, build, docs, delete Go   | 011.04-rust-cutover.md           | new    |
