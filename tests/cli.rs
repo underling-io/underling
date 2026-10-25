@@ -11,11 +11,22 @@ use tokio::time::timeout;
 
 const WAIT_LIMIT: Duration = Duration::from_secs(10);
 
-/// The binary, configured with every required environment variable.
+/// The binary, configured with every required environment variable. The
+/// investigator's work dir doesn't exist; it would only be created for an
+/// investigation.
 fn heinzel() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_heinzel"));
     command
         .env("SENTRY_CLIENT_SECRET", "cli-test-secret")
+        .env("SENTRY_GITHUB_REPOS", "2=acme/web")
+        .env("GITHUB_TOKEN", "cli-test-github-token")
+        .env("ANTHROPIC_API_KEY", "cli-test-anthropic-key")
+        .env("OPENAI_API_KEY", "cli-test-openai-key")
+        .env("CLAUDE_PLUGIN_DIRS", "/plugins/codex,/plugins/auto-task")
+        .env(
+            "INVESTIGATION_WORK_DIR",
+            std::env::temp_dir().join(format!("heinzel-cli-test-{}", std::process::id())),
+        )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);

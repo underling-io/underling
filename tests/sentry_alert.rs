@@ -52,7 +52,22 @@ async fn start_app() -> RunningApp {
         data_dir: dir.path().into(),
         shutdown_timeout: WAIT_LIMIT,
     };
-    let getenv = |key: &str| (key == "SENTRY_CLIENT_SECRET").then(|| SECRET.to_owned());
+    let work_dir = dir.path().join("investigations");
+    let getenv = |key: &str| {
+        let value = match key {
+            "SENTRY_CLIENT_SECRET" => SECRET,
+            // The investigator's required config. The alerts posted here are
+            // for project 1, which it skips as unmapped.
+            "SENTRY_GITHUB_REPOS" => "2=acme/web",
+            "GITHUB_TOKEN" => "e2e-github-token",
+            "ANTHROPIC_API_KEY" => "e2e-anthropic-key",
+            "OPENAI_API_KEY" => "e2e-openai-key",
+            "CLAUDE_PLUGIN_DIRS" => "/plugins/codex,/plugins/auto-task",
+            "INVESTIGATION_WORK_DIR" => work_dir.to_str().unwrap(),
+            _ => return None,
+        };
+        Some(value.to_owned())
+    };
     let slices = app::build(heinzel::slices::FACTORIES, &Deps { getenv: &getenv }).unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -86,7 +101,8 @@ impl RunningApp {
         (response.status().as_u16(), response.text().await.unwrap())
     }
 
-    /// Shuts the app down cleanly and returns every stored event.
+    /// Shuts the app down cleanly and returns every stored alert, leaving
+    /// out what the investigator recorded about them.
     async fn stop(self) -> Vec<Event> {
         self.shutdown.cancel();
         tokio::time::timeout(WAIT_LIMIT, self.run)
@@ -98,6 +114,9 @@ impl RunningApp {
             .unwrap()
             .read_after(0, 10)
             .unwrap()
+            .into_iter()
+            .filter(|e| e.event_type == "SentryIssueAlertReceived")
+            .collect()
     }
 }
 
