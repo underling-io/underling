@@ -228,7 +228,8 @@ The slice reads these when it is built. Any invalid value fails startup with
 | --- | --- | --- | --- |
 | `SENTRY_GITHUB_REPOS` | yes | `<projectId>=<owner>/<repo>`, comma-separated; ids are integers, each mapped once | |
 | `GITHUB_TOKEN` | yes | token that can push branches and open PRs on the mapped repos; must not have the `workflow` scope (see [CI](#ci)) | |
-| `ANTHROPIC_API_KEY` | yes | passed to the `claude` child | |
+| `ANTHROPIC_API_KEY` | one of these two | API key, passed to the `claude` child | |
+| `CLAUDE_CODE_OAUTH_TOKEN` | one of these two | subscription token from `claude setup-token`, passed to the `claude` child instead of an API key; setting both is invalid | |
 | `OPENAI_API_KEY` | yes | passed to the `claude` child, for Codex | |
 | `CLAUDE_PLUGIN_DIRS` | yes | comma-separated plugin dirs (the Codex and auto-task plugins), each passed as `--plugin-dir` | |
 | `INVESTIGATION_TIMEOUT` | no | positive Go duration | `30m` |
@@ -288,18 +289,28 @@ claude --bare -p --verbose --output-format stream-json --no-session-persistence 
   --plugin-dir <each CLAUDE_PLUGIN_DIRS entry>
 ```
 
+With `CLAUDE_CODE_OAUTH_TOKEN`, `--bare` is replaced by `--strict-mcp-config`:
+`--bare` never reads an OAuth token.
+
 The run dir holds `repo` (the work clone), `home` and `claude-config` (the
 child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
 `HOME` of heinzel's own git commands).
 
 - **Environment.** The child's environment is exactly `PATH`, `HOME` and
   `CLAUDE_CONFIG_DIR` (fresh, empty dirs in the run dir, outside the clone),
-  `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. It never sees `GITHUB_TOKEN`,
+  `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (whichever is set) and
+  `OPENAI_API_KEY`. It never sees `GITHUB_TOKEN`,
   `SENTRY_CLIENT_SECRET` or any other variable of heinzel's.
 - **No ambient config.** `--bare` skips CLAUDE.md discovery, hooks, installed
   plugins and MCP servers; `--setting-sources ""` loads no user, project or
   local settings files, so the cloned repo's `.claude/` can't change the
   run. Only the generated settings and the given plugins apply.
+  With an OAuth token there is no `--bare`. `--strict-mcp-config` still skips
+  MCP servers (the clone's `.mcp.json` too), `--setting-sources ""` still
+  skips settings files, and the fresh `CLAUDE_CONFIG_DIR` has no installed
+  plugins. But the clone's CLAUDE.md files are read, and Claude Code's own
+  background features (auto-memory, attribution, LSP) stay on; the sandbox
+  bounds what they can touch.
 - **Sandbox.** The generated settings are (`<run>` is the run dir, `<work>`
   the work dir, both with symlinks resolved):
 
