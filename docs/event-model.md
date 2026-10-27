@@ -444,5 +444,9 @@ from there, so the branch never runs the upstream repo's push CI.
   The platform packages never import a slice, so slices cannot share code
   through them. `internal/slices/imports_test.go` enforces both rules.
 - Event contracts that another slice reads go in `internal/events`: a type-name
-  constant and a payload struct, with no funcs or methods. Their JSON is
-  persisted, so treat it as locked.
+  constant, a payload struct, an `EventType()` method returning the constant
+  and an entry in the `decoders` map. Slices append with `events.Encode` and
+  read with `events.Decode`, never by pairing a type name and a payload by
+  hand. The package has no other funcs or methods, and imports only the
+  stdlib and `internal/platform/eventstore`. Their JSON is persisted, so
+  treat it as locked.

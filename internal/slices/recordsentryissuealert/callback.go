@@ -69,12 +69,7 @@ func (cb *callback) record(r *http.Request, w http.ResponseWriter) (int, any) {
 	if err != nil {
 		return http.StatusBadRequest, errorReply{err.Error()}
 	}
-	payload, err := json.Marshal(alert)
-	if err != nil {
-		return cb.internalError(err)
-	}
-	received := eventstore.NewEvent{Type: events.SentryIssueAlertReceivedType, Payload: payload}
-	_, _, err = cb.store.Append(streamOf(alert), 0, []eventstore.NewEvent{received})
+	_, _, err = cb.store.Append(streamOf(alert), 0, []eventstore.NewEvent{events.Encode(alert)})
 	switch {
 	case errors.Is(err, eventstore.ErrConflict):
 		return http.StatusOK, statusReply{"duplicate"}

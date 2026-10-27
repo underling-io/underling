@@ -2,7 +2,6 @@ package investigatesentryissue
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -74,11 +73,12 @@ func (h *investigator) Handle(e eventstore.Event) {
 	if e.Type != events.SentryIssueAlertReceivedType {
 		return
 	}
-	var alert events.SentryIssueAlertReceived
-	if err := json.Unmarshal(e.Payload, &alert); err != nil {
+	decoded, err := events.Decode(e)
+	if err != nil {
 		h.logger.Error("decode sentry issue alert", "handler", handlerName, "position", e.Position, "error", err)
 		return
 	}
+	alert := decoded.(events.SentryIssueAlertReceived)
 	log := h.logger.With("handler", handlerName, "position", e.Position, "issueId", alert.IssueID)
 	stream := streamID(alert.IssueID)
 
@@ -99,7 +99,7 @@ func (h *investigator) Handle(e eventstore.Event) {
 		return
 	}
 	branch := branchName(alert.IssueID)
-	started := newEvent(events.SentryIssueInvestigationStartedType, events.SentryIssueInvestigationStarted{
+	started := events.Encode(events.SentryIssueInvestigationStarted{
 		IssueID: alert.IssueID, Project: alert.Project, Repo: target.String(), Branch: branch,
 	})
 	if !h.append(log, stream, 0, started) {

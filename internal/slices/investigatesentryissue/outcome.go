@@ -2,7 +2,6 @@ package investigatesentryissue
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 
@@ -21,7 +20,7 @@ type outcome struct {
 
 func skippedOutcome(issueID, reason string) outcome {
 	return outcome{
-		event: newEvent(events.SentryIssueInvestigationSkippedType, events.SentryIssueInvestigationSkipped{IssueID: issueID, Reason: reason}),
+		event: events.Encode(events.SentryIssueInvestigationSkipped{IssueID: issueID, Reason: reason}),
 		name:  "skipped",
 		level: slog.LevelInfo,
 		attrs: []any{"reason", reason},
@@ -30,7 +29,7 @@ func skippedOutcome(issueID, reason string) outcome {
 
 func failedOutcome(issueID, stage, reason string) outcome {
 	return outcome{
-		event: newEvent(events.SentryIssueInvestigationFailedType, events.SentryIssueInvestigationFailed{IssueID: issueID, Stage: stage, Reason: reason}),
+		event: events.Encode(events.SentryIssueInvestigationFailed{IssueID: issueID, Stage: stage, Reason: reason}),
 		name:  "failed",
 		level: slog.LevelWarn,
 		attrs: []any{"stage", stage, "reason", reason},
@@ -39,7 +38,7 @@ func failedOutcome(issueID, stage, reason string) outcome {
 
 func noChangesOutcome(issueID string) outcome {
 	return outcome{
-		event: newEvent(events.SentryIssueInvestigationNoChangesType, events.SentryIssueInvestigationNoChanges{IssueID: issueID}),
+		event: events.Encode(events.SentryIssueInvestigationNoChanges{IssueID: issueID}),
 		name:  "no_changes",
 		level: slog.LevelInfo,
 	}
@@ -47,18 +46,11 @@ func noChangesOutcome(issueID string) outcome {
 
 func prOpenedOutcome(issueID, url string) outcome {
 	return outcome{
-		event: newEvent(events.SentryIssueInvestigationPullRequestOpenedType, events.SentryIssueInvestigationPullRequestOpened{IssueID: issueID, PRURL: url}),
+		event: events.Encode(events.SentryIssueInvestigationPullRequestOpened{IssueID: issueID, PRURL: url}),
 		name:  "pr_opened",
 		level: slog.LevelInfo,
 		attrs: []any{"prUrl", url},
 	}
-}
-
-// newEvent encodes an event contract. The contracts hold only strings and
-// numbers, so encoding can't fail.
-func newEvent(eventType string, payload any) eventstore.NewEvent {
-	data, _ := json.Marshal(payload)
-	return eventstore.NewEvent{Type: eventType, Payload: data}
 }
 
 // record appends o's event at expectedVersion and logs the outcome.

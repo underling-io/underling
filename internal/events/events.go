@@ -1,5 +1,6 @@
 // Package events holds the event contracts shared between slices: type
-// names and payload shapes. It holds no behaviour. The JSON shapes are
+// names and payload shapes, plus Encode and Decode, which tie each payload
+// to its type name. It holds no other behaviour. The JSON shapes are
 // persisted, so changing them is a breaking change.
 package events
 

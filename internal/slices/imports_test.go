@@ -19,7 +19,13 @@ const (
 	slicesPath   = modulePath + "/internal/slices"
 	eventsPath   = modulePath + "/internal/events"
 	platformPath = modulePath + "/internal/platform"
+	// eventStorePath is the one module package the events package may
+	// import, for the NewEvent and Event its codec works on.
+	eventStorePath = platformPath + "/eventstore"
 )
+
+// eventsCodecFuncs are the only funcs the events package may declare.
+var eventsCodecFuncs = map[string]bool{"Encode": true, "Decode": true, "decodeAs": true}
 
 func within(path, root string) bool { return path == root || strings.HasPrefix(path, root+"/") }
 
@@ -158,6 +164,9 @@ func TestTheEventsPackageHoldsOnlyContracts(t *testing.T) {
 		t.Fatalf("found no events files (err %v)", err)
 	}
 	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
 		f, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", file, err)
@@ -165,13 +174,18 @@ func TestTheEventsPackageHoldsOnlyContracts(t *testing.T) {
 		for _, spec := range f.Imports {
 			path, _ := strconv.Unquote(spec.Path.Value)
 			first, _, _ := strings.Cut(path, "/")
-			if strings.Contains(first, ".") || first == modulePath {
-				t.Errorf("%s imports %s; the events package may import only the stdlib", file, path)
+			if (strings.Contains(first, ".") || first == modulePath) && path != eventStorePath {
+				t.Errorf("%s imports %s; the events package may import only the stdlib and %s", file, path, eventStorePath)
 			}
 		}
 		for _, decl := range f.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok {
-				t.Errorf("%s declares func %s; the events package holds contracts only", file, fn.Name.Name)
+			fn, ok := decl.(*ast.FuncDecl)
+			switch {
+			case !ok:
+			case fn.Recv != nil && fn.Name.Name != "EventType":
+				t.Errorf("%s declares method %s; a contract's only method is EventType", file, fn.Name.Name)
+			case fn.Recv == nil && !eventsCodecFuncs[fn.Name.Name]:
+				t.Errorf("%s declares func %s; the events package holds contracts and their codec only", file, fn.Name.Name)
 			}
 		}
 	}
