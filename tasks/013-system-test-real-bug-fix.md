@@ -1,7 +1,7 @@
 ---
 title: System Test Against a Real Bug Fix with Real Claude
 date: 2026-10-27
-status: ready-for-dev
+status: in-dev
 type: feat
 ---
 
