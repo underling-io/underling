@@ -71,12 +71,12 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 
 	var errs []error
-	var err error
 	check := func(variable string, err error) {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", variable, err))
 		}
 	}
+	var err error
 	cfg.repos, err = parseRepos(getenv(reposEnvVar))
 	check(reposEnvVar, err)
 	cfg.anthropic, err = parseCredential(getenv(anthropicKeyVar), getenv(oauthTokenVar))

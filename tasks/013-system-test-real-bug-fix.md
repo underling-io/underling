@@ -65,3 +65,13 @@ Add OAuth support to heinzel's config and claude command (no `--bare`, explicit 
 - `-count=1` and the build tag are load-bearing: a cached pass hides a real failure, and an untagged file would make `go test ./...` start a paid run.
 - With OAuth and no `--bare`, the fresh `CLAUDE_CONFIG_DIR` is what keeps installed plugins and user settings out, which is why the plugin copies must arrive via `--plugin-dir`.
 - The Go toolchain can't be downloaded inside the sandbox; go-version's `go.mod` says `go 1.16`, so it's fine today.
+
+## Implementation Notes
+
+- **Pre-check passed.** `TestCoreZeroValue` panics with `index out of range [0] with length 0` on c6a3b57's parent and passes on c6a3b57.
+- **Not yet run for real.** No Claude or OpenAI credentials were available here. A dry run with dummy credentials covered the clone, the mirror, the precondition, the wiring, the plugin copies and the OAuth launch. It ended where it should: Claude got `401 Invalid bearer token`. The real run still needs `CLAUDE_CODE_OAUTH_TOKEN=… OPENAI_API_KEY=… make system-test`.
+- **No `--safe-mode`.** The local experiment to see whether `--plugin-dir` plugins still load under it was blocked by a permission prompt. So the plan's fallback was taken: OAuth mode uses `--strict-mcp-config` only, and docs/event-model.md says the clone's CLAUDE.md is read in that mode. Follow-up: try `--safe-mode` in a real OAuth run and keep it if `checkInit` passes.
+- **Deviation: waiting on the log, not the stream.** The test waits for the "sentry issue investigation finished" log record, not the event stream: `app.Run` owns the bbolt store, which can't be opened from outside while it runs. The record carries the same outcome, stage, reason and PR URL.
+- **Fake claude.** It now recognises itself by `-p` as the second argument, which both modes pass, instead of by `--bare`.
+- **Under HOME.** heinzel warns that `~/.local/bin` (where `claude` lives) is under HOME. That's fine: heinzel re-opens the claude binary's dir, and the test fails only if `go`, `node` or `codex` resolve under HOME.
+- **Sandbox needs.** Running `make check` inside a socket-binding sandbox fails `recordsentryissuealert` (httptest binds a port). This is pre-existing. The system test needs github.com access for its setup clone.
