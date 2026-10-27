@@ -27,3 +27,41 @@ Add a local system test that replays a real upstream bug: it posts a Sentry aler
 - First, check by hand that `TestCoreZeroValue` panics on the parent of c6a3b57 and passes on c6a3b57. This wasn't run while the task was being written. If the check fails, stop and report rather than picking another commit.
 - Dropping `--bare` in OAuth mode was the user's call. Isolation still comes from the throwaway HOME, the child's own config dir and the sandbox.
 - The OAuth token comes from `claude setup-token`. The child's throwaway HOME can't see the local login.
+
+## Implementation Plan
+
+### TLDR
+
+Add OAuth support to heinzel's config and claude command (no `--bare`, explicit isolation flags), then add a `system`-tagged test package that mirrors go-version at c6a3b57's parent into a local bare remote, wires the record slice and `investigatesentryissue.New` (fake GitHub, local clone base) into `app.Run`, posts a signed alert, waits for the outcome, and checks the pushed branch with upstream's test file.
+
+### Steps
+
+1. **Pre-check (gate).** In a scratch clone of hashicorp/go-version, confirm `go test -run TestCoreZeroValue` panics on `c6a3b57^` with c6a3b57's `version_test.go` swapped in, and passes on c6a3b57. If not, stop and report.
+2. **Credential config.** `loadConfig` reads `CLAUDE_CODE_OAUTH_TOKEN` too; exactly one of it and `ANTHROPIC_API_KEY` must be set — both or neither is one error naming both variables (joined with the other config errors, as today). The config carries a credential kind + value so the child gets only that variable. `config_test` covers API-key-only, token-only, both, neither.
+3. **Child command per mode** (`claude.Config` gains the credential; `Command` branches):
+   - API key: argv and env unchanged.
+   - OAuth: argv drops `--bare` and adds `--strict-mcp-config`; everything else (`--setting-sources ""`, `--settings`, `--plugin-dir`, …) stays. Env carries `CLAUDE_CODE_OAUTH_TOKEN` instead of `ANTHROPIC_API_KEY`.
+   - Try `--safe-mode` in OAuth mode to also block the clone's CLAUDE.md. Keep it only if a real run still loads the `--plugin-dir` plugins (`checkInit` passes) and their skills are usable; otherwise leave it out and document that the clone's CLAUDE.md is read in OAuth mode.
+   - `command_test` asserts argv and env for both modes; the e2e env assertion covers both.
+4. **Fake claude.** `TestMain` in `fakeclaude_test.go` detects the fake by `os.Args[1] == "--bare"`; make detection mode-independent and add one OAuth-mode e2e case.
+5. **Docs.** docs/event-model.md: invocation block and "No ambient config" describe both modes, stating exactly what OAuth mode still blocks and what it doesn't. Env var table gains `CLAUDE_CODE_OAUTH_TOKEN`.
+6. **System test package.** New package outside `internal/slices` (so the slice import guard doesn't apply), every file `//go:build system`.
+   - Fail fast with a named message: Claude credential (either variable) and `OPENAI_API_KEY` set; `go`, `node`, `codex`, `claude` on PATH; `go`, `node`, `codex` not resolving under HOME (symlinks resolved). `claude` may live under HOME — heinzel already re-opens its dir.
+   - Plugins: newest version dir of `openai-codex/codex` and `auto-task/at` under `~/.claude/plugins/cache`, copied into a `t.TempDir()` (outside HOME on macOS); `CLAUDE_PLUGIN_DIRS` points at the copies.
+   - Remote: `git clone --bare` github.com/hashicorp/go-version into `<base>/hashicorp/go-version.git`, force the default branch to `c6a3b57^`, delete every other ref and tag so the fix isn't reachable, point HEAD at that branch.
+   - Precondition: scratch clone of that remote, swap in c6a3b57's `version_test.go`, run `go test -run '^TestCoreZeroValue$' -v`; assert the output shows the test ran and failed, not just a non-zero exit.
+7. **Wiring and run.**
+   - Hand-built `app.Slices`: the record slice via `recordsentryissuealert.New`, and `investigatesentryissue.New` with `GitHubCloneURL` = `<base>/`, a fake `GitHubAPIURL`, and an `HTTPClient` whose transport records requests and answers 201 with a PR URL.
+   - getenv supplies real `HOME`/`PATH`, `SENTRY_GITHUB_REPOS=<id>=hashicorp/go-version`, dummy `GITHUB_TOKEN` and `SENTRY_CLIENT_SECRET`, `INVESTIGATION_TIMEOUT=30m`, `INVESTIGATION_WORK_DIR` = a 0700 temp dir.
+   - Serve with `app.Run` on an in-memory listener (copy the pipe listener from `sentryalert_e2e_test.go`; `_test` files can't be imported).
+   - Post a signed `event_alert`: exception `runtime.Error` / "index out of range [0] with length 0", culprit `github.com/hashicorp/go-version.(*Version).Core`, frames ending in `version.go` `(*Version).Core`.
+   - Wait on the investigation stream until the outcome event (deadline just under 45m). Anything other than PullRequestOpened fails with the event's stage and reason. Assert exactly one draft PR request for hashicorp/go-version.
+8. **Verdict and comparison.** Fresh-clone the pushed `heinzel/sentry-<issueId>` branch from the bare remote, overwrite `version_test.go` with c6a3b57's (Claude's own test edits are dropped on purpose), run `go test -run '^TestCoreZeroValue$'` then `go test ./...`; both must pass. `t.Log` `git diff c6a3b57^ <branch> -- version.go` next to `git show c6a3b57 -- version.go`, no assertion.
+9. **Make target.** `system-test`: `go test -tags system -timeout 45m -v -count=1` on the new package. `check` unchanged.
+
+### Notes
+
+- github.com is only fetched by the test's setup; heinzel never sees a github.com URL.
+- `-count=1` and the build tag are load-bearing: a cached pass hides a real failure, and an untagged file would make `go test ./...` start a paid run.
+- With OAuth and no `--bare`, the fresh `CLAUDE_CONFIG_DIR` is what keeps installed plugins and user settings out, which is why the plugin copies must arrive via `--plugin-dir`.
+- The Go toolchain can't be downloaded inside the sandbox; go-version's `go.mod` says `go 1.16`, so it's fine today.
