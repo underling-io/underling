@@ -8,12 +8,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"heinzel/internal/slices/investigatesentryissue/claude"
 )
 
 const (
 	reposEnvVar      = "SENTRY_GITHUB_REPOS"
 	githubTokenVar   = "GITHUB_TOKEN"
 	anthropicKeyVar  = "ANTHROPIC_API_KEY"
+	oauthTokenVar    = "CLAUDE_CODE_OAUTH_TOKEN"
 	openAIKeyVar     = "OPENAI_API_KEY"
 	pluginDirsEnvVar = "CLAUDE_PLUGIN_DIRS"
 	timeoutEnvVar    = "INVESTIGATION_TIMEOUT"
@@ -32,18 +35,18 @@ func (r repo) String() string { return r.owner + "/" + r.name }
 
 // config is the slice's settings.
 type config struct {
-	repos        map[int64]repo // by Sentry project id
-	githubToken  string
-	anthropicKey string
-	openAIKey    string
-	pluginDirs   []string
-	timeout      time.Duration
-	maxAge       time.Duration
-	claudeBin    string
-	workDir      string // "" until New picks the default
-	path         string // the child's PATH: heinzel's own
-	parentHome   string // heinzel's HOME, or ""; the child may not read it
-	denyRead     []string
+	repos       map[int64]repo // by Sentry project id
+	githubToken string
+	anthropic   claude.Credential
+	openAIKey   string
+	pluginDirs  []string
+	timeout     time.Duration
+	maxAge      time.Duration
+	claudeBin   string
+	workDir     string // "" until New picks the default
+	path        string // the child's PATH: heinzel's own
+	parentHome  string // heinzel's HOME, or ""; the child may not read it
+	denyRead    []string
 	// readable are the paths under denied ones that sandboxed commands
 	// still need: the plugin dirs and the claude binary's dir. Set by
 	// resolveReadPaths.
@@ -54,12 +57,11 @@ type config struct {
 // value, each naming its variable.
 func loadConfig(getenv func(string) string) (config, error) {
 	cfg := config{
-		githubToken:  getenv(githubTokenVar),
-		anthropicKey: getenv(anthropicKeyVar),
-		openAIKey:    getenv(openAIKeyVar),
-		claudeBin:    getenv(claudeBinEnvVar),
-		workDir:      getenv(workDirEnvVar),
-		path:         getenv("PATH"),
+		githubToken: getenv(githubTokenVar),
+		openAIKey:   getenv(openAIKeyVar),
+		claudeBin:   getenv(claudeBinEnvVar),
+		workDir:     getenv(workDirEnvVar),
+		path:        getenv("PATH"),
 	}
 	if cfg.claudeBin == "" {
 		cfg.claudeBin = "claude"
@@ -69,15 +71,19 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 
 	var errs []error
+	var err error
 	check := func(variable string, err error) {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", variable, err))
 		}
 	}
-	var err error
 	cfg.repos, err = parseRepos(getenv(reposEnvVar))
 	check(reposEnvVar, err)
-	for _, v := range []struct{ name, value string }{{githubTokenVar, cfg.githubToken}, {anthropicKeyVar, cfg.anthropicKey}, {openAIKeyVar, cfg.openAIKey}} {
+	cfg.anthropic, err = parseCredential(getenv(anthropicKeyVar), getenv(oauthTokenVar))
+	if err != nil {
+		errs = append(errs, err)
+	}
+	for _, v := range []struct{ name, value string }{{githubTokenVar, cfg.githubToken}, {openAIKeyVar, cfg.openAIKey}} {
 		if v.value == "" {
 			check(v.name, errors.New("must be set"))
 		}
@@ -94,6 +100,20 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return config{}, errors.Join(errs...)
 	}
 	return cfg, nil
+}
+
+// parseCredential returns the Anthropic credential: an API key or an OAuth
+// token, exactly one of them.
+func parseCredential(apiKey, oauthToken string) (claude.Credential, error) {
+	switch {
+	case apiKey != "" && oauthToken != "":
+		return claude.Credential{}, fmt.Errorf("%s and %s: set only one", anthropicKeyVar, oauthTokenVar)
+	case apiKey != "":
+		return claude.Credential{Value: apiKey}, nil
+	case oauthToken != "":
+		return claude.Credential{OAuth: true, Value: oauthToken}, nil
+	}
+	return claude.Credential{}, fmt.Errorf("%s or %s: must be set", anthropicKeyVar, oauthTokenVar)
 }
 
 var repoNamePart = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)

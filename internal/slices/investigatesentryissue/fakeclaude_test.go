@@ -16,7 +16,7 @@ import (
 )
 
 // The test binary doubles as a fake claude: the slice runs it as CLAUDE_BIN,
-// and the fake recognises itself by its first argument, which the real
+// and the fake recognises itself by its second argument, -p, which the real
 // test runner never passes. Its env holds only what the slice hands the
 // child, so it reads its mode from, and records each call to, files in the
 // work dir: two levels above its working directory, the clone.
@@ -32,7 +32,7 @@ const (
 )
 
 func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && os.Args[1] == "--bare" {
+	if len(os.Args) > 2 && os.Args[2] == "-p" {
 		os.Exit(fakeClaude())
 	}
 	os.Exit(m.Run())

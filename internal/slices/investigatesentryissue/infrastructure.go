@@ -64,14 +64,14 @@ func (r *workspaceRun) remove() {
 
 func claudeConfig(cfg config) claude.Config {
 	return claude.Config{
-		Bin:          cfg.claudeBin,
-		PluginDirs:   cfg.pluginDirs,
-		Path:         cfg.path,
-		AnthropicKey: cfg.anthropicKey,
-		OpenAIKey:    cfg.openAIKey,
-		ParentHome:   cfg.parentHome,
-		DenyRead:     cfg.denyRead,
-		Readable:     cfg.readable,
+		Bin:        cfg.claudeBin,
+		PluginDirs: cfg.pluginDirs,
+		Path:       cfg.path,
+		Anthropic:  cfg.anthropic,
+		OpenAIKey:  cfg.openAIKey,
+		ParentHome: cfg.parentHome,
+		DenyRead:   cfg.denyRead,
+		Readable:   cfg.readable,
 	}
 }
 

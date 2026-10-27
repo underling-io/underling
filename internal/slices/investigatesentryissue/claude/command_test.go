@@ -12,14 +12,14 @@ import (
 
 func testConfig() Config {
 	return Config{
-		AnthropicKey: "anthropic-key",
-		OpenAIKey:    "openai-key",
-		PluginDirs:   []string{"/p/codex", "/p/auto-task"},
-		Bin:          "/opt/claude/bin/claude",
-		Path:         "/usr/bin:/bin",
-		ParentHome:   "/home/heinzel",
-		DenyRead:     []string{"/srv/heinzel-data"},
-		Readable:     []string{"/p/codex", "/p/auto-task", "/opt/claude/bin"},
+		Anthropic:  Credential{Value: "anthropic-key"},
+		OpenAIKey:  "openai-key",
+		PluginDirs: []string{"/p/codex", "/p/auto-task"},
+		Bin:        "/opt/claude/bin/claude",
+		Path:       "/usr/bin:/bin",
+		ParentHome: "/home/heinzel",
+		DenyRead:   []string{"/srv/heinzel-data"},
+		Readable:   []string{"/p/codex", "/p/auto-task", "/opt/claude/bin"},
 	}
 }
 
@@ -80,6 +80,51 @@ func TestCommandEnvHoldsOnlyWhatTheChildNeeds(t *testing.T) {
 		"HOME=/w/run/home",
 		"CLAUDE_CONFIG_DIR=/w/run/claude-config",
 		"ANTHROPIC_API_KEY=anthropic-key",
+		"OPENAI_API_KEY=openai-key",
+	}
+	if !slices.Equal(cmd.env, want) {
+		t.Fatalf("env = %q, want %q", cmd.env, want)
+	}
+}
+
+// oauthConfig is testConfig logging in with a subscription token.
+func oauthConfig() Config {
+	cfg := testConfig()
+	cfg.Anthropic = Credential{OAuth: true, Value: "oauth-token"}
+	return cfg
+}
+
+func TestCommandArgvWithAnOAuthTokenSkipsBareButNotMCPIsolation(t *testing.T) {
+	cmd, err := Command(oauthConfig(), testDirs(), "the prompt")
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	want := []string{
+		"--strict-mcp-config", "-p",
+		"--verbose", "--output-format", "stream-json",
+		"--no-session-persistence",
+		"--setting-sources", "",
+		"--settings", string(settingsJSON(t, oauthConfig())),
+		"--permission-mode", "acceptEdits",
+		"--permission-prompts", "none",
+		"--plugin-dir", "/p/codex",
+		"--plugin-dir", "/p/auto-task",
+	}
+	if !slices.Equal(cmd.args, want) {
+		t.Fatalf("args = %q, want %q", cmd.args, want)
+	}
+}
+
+func TestCommandEnvWithAnOAuthTokenHoldsTheTokenInsteadOfAKey(t *testing.T) {
+	cmd, err := Command(oauthConfig(), testDirs(), "p")
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	want := []string{
+		"PATH=/usr/bin:/bin",
+		"HOME=/w/run/home",
+		"CLAUDE_CONFIG_DIR=/w/run/claude-config",
+		"CLAUDE_CODE_OAUTH_TOKEN=oauth-token",
 		"OPENAI_API_KEY=openai-key",
 	}
 	if !slices.Equal(cmd.env, want) {

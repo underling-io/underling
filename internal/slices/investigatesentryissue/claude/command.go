@@ -15,11 +15,11 @@ const openAIHost = "api.openai.com"
 
 // Config is what a run needs from heinzel's settings.
 type Config struct {
-	Bin          string
-	PluginDirs   []string
-	Path         string // the child's PATH
-	AnthropicKey string
-	OpenAIKey    string
+	Bin        string
+	PluginDirs []string
+	Path       string // the child's PATH
+	Anthropic  Credential
+	OpenAIKey  string
 	// ParentHome is heinzel's own HOME, or "". The child may not read it.
 	ParentHome string
 	// DenyRead are more paths the child may not read, such as heinzel's
@@ -28,6 +28,21 @@ type Config struct {
 	// Readable are paths under denied ones that sandboxed commands still
 	// need: the plugin dirs and the claude binary's dir.
 	Readable []string
+}
+
+// Credential is how the child logs in to Anthropic: an API key, or a
+// subscription OAuth token from `claude setup-token`.
+type Credential struct {
+	OAuth bool
+	Value string
+}
+
+// envVar returns the variable the child reads the credential from.
+func (c Credential) envVar() string {
+	if c.OAuth {
+		return "CLAUDE_CODE_OAUTH_TOKEN"
+	}
+	return "ANTHROPIC_API_KEY"
 }
 
 // Dirs are the paths of one run, symlinks resolved.
@@ -56,14 +71,22 @@ type Cmd struct {
 
 // Command builds the headless claude invocation for a run in dirs. The
 // child gets only PATH, its own HOME and config dir, and the two model
-// keys from heinzel's environment.
+// credentials from heinzel's environment.
+//
+// --bare never reads an OAuth token, so a run on one goes without it and
+// skips MCP servers with --strict-mcp-config instead; the fresh config dir
+// and --setting-sources "" keep installed plugins and settings out.
 func Command(cfg Config, dirs Dirs, prompt string) (Cmd, error) {
 	settings, err := json.Marshal(sandboxSettings(cfg, dirs))
 	if err != nil {
 		return Cmd{}, err
 	}
+	minimal := "--bare"
+	if cfg.Anthropic.OAuth {
+		minimal = "--strict-mcp-config"
+	}
 	args := []string{
-		"--bare", "-p",
+		minimal, "-p",
 		"--verbose", "--output-format", "stream-json",
 		"--no-session-persistence",
 		"--setting-sources", "",
@@ -82,7 +105,7 @@ func Command(cfg Config, dirs Dirs, prompt string) (Cmd, error) {
 			"PATH=" + cfg.Path,
 			"HOME=" + dirs.Home,
 			"CLAUDE_CONFIG_DIR=" + dirs.ClaudeConfig,
-			"ANTHROPIC_API_KEY=" + cfg.AnthropicKey,
+			cfg.Anthropic.envVar() + "=" + cfg.Anthropic.Value,
 			"OPENAI_API_KEY=" + cfg.OpenAIKey,
 		},
 		stdin:      prompt,

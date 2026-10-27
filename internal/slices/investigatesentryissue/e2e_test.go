@@ -383,7 +383,23 @@ func TestHappyPathPushesTheBranchAndOpensADraftPR(t *testing.T) {
 }
 
 func TestChildEnvironmentHoldsNoHeinzelSecrets(t *testing.T) {
-	h := newHarness(t, modeNoop)
+	for _, mode := range []struct {
+		name       string
+		opts       []option
+		credential string // the variable the child logs in with
+		value      string
+	}{
+		{"api key", nil, "ANTHROPIC_API_KEY", "anthropic-test-key"},
+		{"oauth token", []option{withEnv("ANTHROPIC_API_KEY", ""), withEnv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-test-token")}, "CLAUDE_CODE_OAUTH_TOKEN", "oauth-test-token"},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			assertChildEnvironment(t, newHarness(t, modeNoop, mode.opts...), mode.credential, mode.value)
+		})
+	}
+}
+
+func assertChildEnvironment(t *testing.T, h *harness, credential, value string) {
+	t.Helper()
 
 	h.handler.Handle(alert(5, 1, now))
 
@@ -400,7 +416,9 @@ func TestChildEnvironmentHoldsNoHeinzelSecrets(t *testing.T) {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
-	if want := []string{"ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "HOME", "OPENAI_API_KEY", "PATH"}; !slices.Equal(keys, want) {
+	want := []string{credential, "CLAUDE_CONFIG_DIR", "HOME", "OPENAI_API_KEY", "PATH"}
+	slices.Sort(want)
+	if !slices.Equal(keys, want) {
 		t.Errorf("child env has %v, want exactly %v", keys, want)
 	}
 	for _, secret := range []string{githubToken, sentrySecret, "unrelated-value"} {
@@ -408,7 +426,7 @@ func TestChildEnvironmentHoldsNoHeinzelSecrets(t *testing.T) {
 			t.Errorf("child env contains %q", secret)
 		}
 	}
-	if env["ANTHROPIC_API_KEY"] != "anthropic-test-key" || env["OPENAI_API_KEY"] != "openai-test-key" || env["PATH"] != os.Getenv("PATH") {
+	if env[credential] != value || env["OPENAI_API_KEY"] != "openai-test-key" || env["PATH"] != os.Getenv("PATH") {
 		t.Errorf("child env = %v", env)
 	}
 	dir := calls[0].Dir

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"heinzel/internal/slices/investigatesentryissue/claude"
 )
 
 // validEnv holds every required variable with a valid value.
@@ -32,16 +34,16 @@ func TestLoadConfigDefaults(t *testing.T) {
 		t.Fatalf("loadConfig: %v", err)
 	}
 	want := config{
-		repos:        map[int64]repo{1: {owner: "acme", name: "web"}},
-		githubToken:  "gh-token",
-		anthropicKey: "anthropic-key",
-		openAIKey:    "openai-key",
-		pluginDirs:   []string{"/plugins/codex"},
-		timeout:      30 * time.Minute,
-		maxAge:       time.Hour,
-		claudeBin:    "claude",
-		workDir:      "",
-		path:         "/usr/bin:/bin",
+		repos:       map[int64]repo{1: {owner: "acme", name: "web"}},
+		githubToken: "gh-token",
+		anthropic:   claude.Credential{Value: "anthropic-key"},
+		openAIKey:   "openai-key",
+		pluginDirs:  []string{"/plugins/codex"},
+		timeout:     30 * time.Minute,
+		maxAge:      time.Hour,
+		claudeBin:   "claude",
+		workDir:     "",
+		path:        "/usr/bin:/bin",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
@@ -95,7 +97,6 @@ func TestLoadConfigRejectsInvalidValues(t *testing.T) {
 		{"SENTRY_GITHUB_REPOS", "1=acme/web,"},
 		{"SENTRY_GITHUB_REPOS", "1=acme/web,1=acme/api"},
 		{"GITHUB_TOKEN", ""},
-		{"ANTHROPIC_API_KEY", ""},
 		{"OPENAI_API_KEY", ""},
 		{"CLAUDE_PLUGIN_DIRS", ""},
 		{"CLAUDE_PLUGIN_DIRS", "/p/codex,,/p/at"},
@@ -112,6 +113,30 @@ func TestLoadConfigRejectsInvalidValues(t *testing.T) {
 			_, err := loadConfig(with(map[string]string{tt.variable: tt.value}))
 			if err == nil || !strings.Contains(err.Error(), tt.variable) {
 				t.Fatalf("got error %v, want one naming %s", err, tt.variable)
+			}
+		})
+	}
+}
+
+func TestLoadConfigTakesAnOAuthTokenInsteadOfAnAPIKey(t *testing.T) {
+	got, err := loadConfig(with(map[string]string{"ANTHROPIC_API_KEY": "", "CLAUDE_CODE_OAUTH_TOKEN": "oauth-token"}))
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if want := (claude.Credential{OAuth: true, Value: "oauth-token"}); got.anthropic != want {
+		t.Fatalf("anthropic = %+v, want %+v", got.anthropic, want)
+	}
+}
+
+func TestLoadConfigWantsExactlyOneAnthropicCredential(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"neither": {"ANTHROPIC_API_KEY": ""},
+		"both":    {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-token"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := loadConfig(with(env))
+			if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
+				t.Fatalf("got error %v, want one naming both variables", err)
 			}
 		})
 	}
