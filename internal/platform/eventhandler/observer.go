@@ -22,7 +22,7 @@ type Handler interface {
 	Handle(e eventstore.Event)
 }
 
-// Source is what the runner needs from the event store.
+// Source is what the observer needs from the event store.
 type Source interface {
 	ReadAfter(position uint64, limit int) ([]eventstore.Event, error)
 	Checkpoint(name string) (uint64, error)
@@ -30,8 +30,8 @@ type Source interface {
 	Subscribe() <-chan struct{}
 }
 
-// Runner runs a loop per handler until stopped.
-type Runner struct {
+// Observer runs a loop per handler until stopped.
+type Observer struct {
 	logger *slog.Logger
 	stop   context.CancelFunc
 	wg     sync.WaitGroup
@@ -42,32 +42,32 @@ type Runner struct {
 
 // Start starts a loop for each handler: it catches up from the handler's
 // checkpoint, then follows new events.
-func Start(source Source, handlers []Handler, logger *slog.Logger) *Runner {
+func Start(source Source, handlers []Handler, logger *slog.Logger) *Observer {
 	ctx, stop := context.WithCancel(context.Background())
-	r := &Runner{logger: logger, stop: stop}
+	observer := &Observer{logger: logger, stop: stop}
 	for _, h := range handlers {
 		wake := source.Subscribe()
-		r.wg.Go(func() {
+		observer.wg.Go(func() {
 			if err := loop(ctx, source, h, wake); err != nil {
 				logger.Error("event handler stopped", "handler", h.Name(), "error", err)
-				r.mu.Lock()
-				r.errs = append(r.errs, err)
-				r.mu.Unlock()
+				observer.mu.Lock()
+				observer.errs = append(observer.errs, err)
+				observer.mu.Unlock()
 			}
 		})
 	}
-	return r
+	return observer
 }
 
 // Stop stops every loop and waits for them. A handler in the middle of an
 // event finishes and checkpoints it; later events stay for the next start.
-func (r *Runner) Stop() error {
-	r.stop()
-	r.logger.Info("stopping event handlers")
-	r.wg.Wait()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return errors.Join(r.errs...)
+func (o *Observer) Stop() error {
+	o.stop()
+	o.logger.Info("stopping event handlers")
+	o.wg.Wait()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return errors.Join(o.errs...)
 }
 
 func loop(ctx context.Context, source Source, h Handler, wake <-chan struct{}) error {

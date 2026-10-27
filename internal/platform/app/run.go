@@ -75,7 +75,7 @@ func Run(ctx context.Context, cfg Config, ln net.Listener, slices Slices, logger
 	for _, a := range slices.Automations {
 		handlers = append(handlers, a.Handler(automationCtx, store))
 	}
-	runner := eventhandler.Start(store, handlers, logger)
+	observer := eventhandler.Start(store, handlers, logger)
 
 	srv := &http.Server{
 		Handler:           Router(store, slices.StateChanges),
@@ -96,7 +96,7 @@ func Run(ctx context.Context, cfg Config, ln net.Listener, slices Slices, logger
 
 	errs = append(errs, drain(srv, cfg.ShutdownTimeout))
 	cancelAutomations()
-	if err := runner.Stop(); err != nil {
+	if err := observer.Stop(); err != nil {
 		errs = append(errs, fmt.Errorf("stop event handlers: %w", err))
 	}
 	if err := store.Close(); err != nil {

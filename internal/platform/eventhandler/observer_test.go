@@ -81,7 +81,7 @@ func checkpoint(t *testing.T, s *eventstore.Store, name string) uint64 {
 	return position
 }
 
-func stop(t *testing.T, r *eventhandler.Runner) {
+func stop(t *testing.T, r *eventhandler.Observer) {
 	t.Helper()
 	if err := r.Stop(); err != nil {
 		t.Fatalf("stop: %v", err)
