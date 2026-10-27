@@ -2,11 +2,61 @@
 
 heinzel is organised as vertical slices, event-modeling style. A slice is
 either a **state change** (trigger → command → event) or an **automation**
-(event → reaction). A state change is an `app.StateChange` (one HTTP route);
-an automation is an `app.Automation` (one event handler). Each slice is one
-package, `internal/slices/<slice>/`.
+(event → reaction). A state change is an `app.StateChange` (one HTTP route,
+served with [Gin](https://github.com/gin-gonic/gin)); an automation is an
+`app.Automation` (one event handler). Each slice is one package,
+`internal/slices/<slice>/`, holding everything it needs.
 Slices never import each other; they are coupled only through the events in
-`internal/events`.
+`internal/events`. The shared platform they build on lives in
+`internal/platform/`: `app` (slice registration, the router, the
+lifecycle), `eventstore` and `eventhandler`.
+
+heinzel is a single static binary (pure Go, no cgo). It needs nothing but
+a data dir (`-data-dir`, default `./data`) and the slices' environment
+variables. Other flags: `-addr` (default `:8080`) and `-shutdown-timeout`
+(default `10s`). Invalid arguments or configuration exit with status 2, a
+runtime error with 1.
+
+## Event store
+
+The event store is embedded: [hallgren/eventsourcing](https://github.com/hallgren/eventsourcing)'s
+bbolt event store, plus heinzel's own checkpoints. The data dir holds two
+files:
+
+- `events.db`, in hallgren's bbolt format. Each stream is one hallgren
+  aggregate: `AggregateType` is always `heinzel`, `AggregateID` is the
+  stream, `Version` the event's version in the stream, `Reason` the event
+  type, `Data` the JSON payload as-is and `GlobalVersion` the global
+  position. Timestamps are UTC with nanoseconds.
+- `checkpoints.db`, a bbolt file with one bucket, `checkpoints`: handler
+  name → the last position it processed, 8-byte big-endian.
+
+Both files are opened with a one-second lock timeout, so a second heinzel
+on the same data dir fails at startup. A `heinzel.db` from before this
+store (the earlier hand-rolled layout) is never opened or migrated.
+
+`eventstore.Store` is what slices see:
+
+- `Append(stream, expectedVersion, events)` appends if the stream is at
+  `expectedVersion` (0: the stream must not exist yet). Otherwise it
+  returns `eventstore.ErrConflict` (match it with `errors.Is`) and stores
+  nothing. It returns the stream's new version and the global position of
+  the last event.
+- `ReadAfter(position, limit)` returns stored events in global order.
+- Each successful append wakes the event handlers.
+
+`eventhandler` runs one goroutine per automation's handler: it resumes
+after the handler's checkpoint, reads in batches, and checkpoints after
+each event. Delivery is at least once (a crash between `Handle` and the
+checkpoint repeats the event), so handlers make their appends idempotent
+with expected versions. Stopping lets the current `Handle` finish and
+leaves later events for the next start. heinzel doesn't use hallgren's
+projections, which keep positions in memory, poll, and hold a read
+transaction across callbacks.
+
+On shutdown heinzel drains HTTP requests (closing them after
+`-shutdown-timeout`), cancels the automations' context, stops the event
+handlers and closes the store, in that order.
 
 ## Sentry
 
@@ -343,12 +393,19 @@ from there, so the branch never runs the upstream repo's push CI.
 
 - Put the slice in its own package, `internal/slices/<slice>/`, named after its
   command or automation (`record…`, `investigate…`). One package holds exactly one
-  slice: its route and command handling, or its event handler.
+  slice, with everything it needs: its route or event handler, command
+  handling, config, domain logic, infrastructure adapters and tests.
+  Sub-packages (say for git or HTTP mechanics) belong to the slice.
 - Expose a constructor for the slice's kind:
   - A state change has `New(...) app.StateChange`: a struct with the route's
-    `Pattern` (e.g. `POST /sentry/callback`) and a
-    `Handler func(store *eventstore.Store) http.Handler`, which the app calls
-    once at startup.
+    `Method` and Gin `Path` (e.g. `http.MethodPost` and `/sentry/callback`,
+    or `/notes/:id` with a path parameter) and a
+    `Handler func(store *eventstore.Store) gin.HandlerFunc`, which the app
+    calls once at startup. The app's router answers 404 for an unknown path,
+    405 for a known path with another method, and never redirects a
+    trailing slash. Test a route through `app.Router(store, stateChanges)`,
+    which builds the same Gin router `app.Run` serves, rather than building
+    Gin in the slice.
   - An automation has `New(...) app.Automation`: a struct with a
     `Handler func(ctx context.Context, store *eventstore.Store) eventhandler.Handler`,
     which the app calls once at startup, after opening the store. `ctx` is
@@ -380,12 +437,12 @@ from there, so the branch never runs the upstream repo's push CI.
   `_<os>`/`_<arch>` file suffixes apply), except `testdata` and names starting
   with `.` or `_`. `internal/slices/generated_test.go` fails until the
   generated file matches the directories.
-- A slice may import only the stdlib, its own package and sub-packages,
-  `internal/events`, `internal/eventstore`, `internal/eventhandler` and
-  `internal/app`. It never imports another slice or a shared helper package.
-  A sub-package (say for git or HTTP mechanics) belongs to its slice and is
-  not a slice itself; it must not import its parent.
-  `internal/slices/imports_test.go` enforces this.
+- A slice (its sub-packages and tests included) may import only the stdlib,
+  third-party libraries, `internal/events`, the shared platform packages
+  under `internal/platform/` and its own packages. It never imports another
+  slice, the `internal/slices` parent or any other package of this module.
+  The platform packages never import a slice, so slices cannot share code
+  through them. `internal/slices/imports_test.go` enforces both rules.
 - Event contracts that another slice reads go in `internal/events`: a type-name
   constant and a payload struct, with no funcs or methods. Their JSON is
   persisted, so treat it as locked.

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/app"
+	"heinzel/internal/platform/app"
 	_ "heinzel/internal/slices" // registers every slice, as main does
 )
 

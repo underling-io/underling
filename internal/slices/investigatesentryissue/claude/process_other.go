@@ -4,9 +4,9 @@ package claude
 
 import "os/exec"
 
-// killProcessGroup keeps exec's default: cancelling kills only the child.
-func killProcessGroup(*exec.Cmd) {}
+// killProcessGroupOnCancel keeps exec's default: cancelling kills only the
+// child.
+func killProcessGroupOnCancel(*exec.Cmd) {}
 
-// killGroup does nothing: without process groups there is nothing to kill
-// once the child exited.
+// killGroup does nothing: there are no process groups to clean up.
 func killGroup(*exec.Cmd) {}

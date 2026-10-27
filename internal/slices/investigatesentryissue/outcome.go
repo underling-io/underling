@@ -7,100 +7,63 @@ import (
 	"log/slog"
 
 	"heinzel/internal/events"
-	"heinzel/internal/eventstore"
-)
-
-// Outcome names in the log line that ends each investigation.
-const (
-	outcomePROpened  = "pr_opened"
-	outcomeNoChanges = "no_changes"
-	outcomeSkipped   = "skipped"
-	outcomeFailed    = "failed"
+	"heinzel/internal/platform/eventstore"
 )
 
 // outcome is how an investigation (or a skip) ended: the event to record
-// and the log attributes describing it.
+// and how to log it.
 type outcome struct {
-	eventType string
-	payload   any
-	name      string
-	level     slog.Level
-	attrs     []any
+	event eventstore.NewEvent
+	name  string // pr_opened, no_changes, skipped or failed
+	level slog.Level
+	attrs []any
 }
 
 func skippedOutcome(issueID, reason string) outcome {
 	return outcome{
-		eventType: events.SentryIssueInvestigationSkippedType,
-		payload:   events.SentryIssueInvestigationSkipped{IssueID: issueID, Reason: reason},
-		name:      outcomeSkipped,
-		level:     slog.LevelInfo,
-		attrs:     []any{"reason", reason},
+		event: newEvent(events.SentryIssueInvestigationSkippedType, events.SentryIssueInvestigationSkipped{IssueID: issueID, Reason: reason}),
+		name:  "skipped",
+		level: slog.LevelInfo,
+		attrs: []any{"reason", reason},
 	}
 }
 
-// failedOutcome is a failure at stage, one of the events.InvestigationFailed*
-// stages, with a human-readable reason.
 func failedOutcome(issueID, stage, reason string) outcome {
 	return outcome{
-		eventType: events.SentryIssueInvestigationFailedType,
-		payload:   events.SentryIssueInvestigationFailed{IssueID: issueID, Stage: stage, Reason: reason},
-		name:      outcomeFailed,
-		level:     slog.LevelWarn,
-		attrs:     []any{"stage", stage, "reason", reason},
+		event: newEvent(events.SentryIssueInvestigationFailedType, events.SentryIssueInvestigationFailed{IssueID: issueID, Stage: stage, Reason: reason}),
+		name:  "failed",
+		level: slog.LevelWarn,
+		attrs: []any{"stage", stage, "reason", reason},
 	}
 }
 
 func noChangesOutcome(issueID string) outcome {
 	return outcome{
-		eventType: events.SentryIssueInvestigationNoChangesType,
-		payload:   events.SentryIssueInvestigationNoChanges{IssueID: issueID},
-		name:      outcomeNoChanges,
-		level:     slog.LevelInfo,
+		event: newEvent(events.SentryIssueInvestigationNoChangesType, events.SentryIssueInvestigationNoChanges{IssueID: issueID}),
+		name:  "no_changes",
+		level: slog.LevelInfo,
 	}
 }
 
 func prOpenedOutcome(issueID, url string) outcome {
 	return outcome{
-		eventType: events.SentryIssueInvestigationPullRequestOpenedType,
-		payload:   events.SentryIssueInvestigationPullRequestOpened{IssueID: issueID, PRURL: url},
-		name:      outcomePROpened,
-		level:     slog.LevelInfo,
-		attrs:     []any{"prUrl", url},
+		event: newEvent(events.SentryIssueInvestigationPullRequestOpenedType, events.SentryIssueInvestigationPullRequestOpened{IssueID: issueID, PRURL: url}),
+		name:  "pr_opened",
+		level: slog.LevelInfo,
+		attrs: []any{"prUrl", url},
 	}
 }
 
-func (o outcome) event() (eventstore.NewEvent, error) {
-	payload, err := json.Marshal(o.payload)
-	if err != nil {
-		return eventstore.NewEvent{}, err
-	}
-	return eventstore.NewEvent{Type: o.eventType, Payload: payload}, nil
+// newEvent encodes an event contract. The contracts hold only strings and
+// numbers, so encoding can't fail.
+func newEvent(eventType string, payload any) eventstore.NewEvent {
+	data, _ := json.Marshal(payload)
+	return eventstore.NewEvent{Type: eventType, Payload: data}
 }
 
-// startedEvent is the event that starts an investigation of alert's issue in
-// target, on branch.
-func startedEvent(alert events.SentryIssueAlertReceived, target repo, branch string) (eventstore.NewEvent, error) {
-	payload, err := json.Marshal(events.SentryIssueInvestigationStarted{IssueID: alert.IssueID, Project: alert.Project, Repo: target.String(), Branch: branch})
-	if err != nil {
-		return eventstore.NewEvent{}, err
-	}
-	return eventstore.NewEvent{Type: events.SentryIssueInvestigationStartedType, Payload: payload}, nil
-}
-
-// recordFirst records o as the stream's first event; a conflict means the
-// issue was already handled.
-func (h *investigator) recordFirst(log *slog.Logger, stream string, o outcome) {
-	h.record(log, stream, 0, o)
-}
-
-// record appends o at expectedVersion and logs the outcome line.
+// record appends o's event at expectedVersion and logs the outcome.
 func (h *investigator) record(log *slog.Logger, stream string, expectedVersion uint64, o outcome) {
-	e, err := o.event()
-	if err != nil {
-		log.Error("encode investigation outcome", "error", err)
-		return
-	}
-	if !h.append(log, stream, expectedVersion, e) {
+	if !h.append(log, stream, expectedVersion, o.event) {
 		return
 	}
 	log.Log(context.Background(), o.level, "sentry issue investigation finished", append([]any{"outcome", o.name}, o.attrs...)...)

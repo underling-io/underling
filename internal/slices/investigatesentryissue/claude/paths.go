@@ -9,7 +9,7 @@ import (
 
 // WithResolved returns the non-empty paths, each followed by its
 // symlink-resolved form when that differs, without duplicates. Denying
-// both keeps the child out whichever form it reaches the path by.
+// both forms keeps the child out whichever way it reaches a path.
 func WithResolved(paths []string) []string {
 	var out []string
 	add := func(p string) {
@@ -30,7 +30,7 @@ func WithResolved(paths []string) []string {
 }
 
 // ResolvePath returns path with symlinks resolved, or just cleaned if it
-// can't be resolved (e.g. it doesn't exist).
+// can't be resolved (say it doesn't exist).
 func ResolvePath(path string) string {
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		return resolved

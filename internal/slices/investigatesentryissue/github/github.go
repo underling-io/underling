@@ -5,23 +5,26 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 )
 
-const errorBodyMax = 512
+const (
+	errorBodyMax    = 512
+	responseBodyMax = 1 << 20
+)
 
-// Client opens pull requests through the GitHub REST API.
+// Client opens pull requests.
 type Client struct {
-	// APIURL is the REST API base, e.g. https://api.github.com.
-	APIURL string
+	APIURL string // the REST API base, e.g. https://api.github.com
 	Token  string
 	HTTP   *http.Client
 }
 
-// PullRequest is what a new pull request holds.
+// PullRequest is a pull request to open.
 type PullRequest struct {
 	Title string `json:"title"`
 	Head  string `json:"head"`
@@ -31,16 +34,15 @@ type PullRequest struct {
 }
 
 // OpenDraftPR opens pr as a draft in owner/name and returns its URL. Any
-// status but 201 is an error with the status and the start of the response
-// body.
+// answer but 201 is an error naming the status and the start of the body.
 func (c *Client) OpenDraftPR(ctx context.Context, owner, name string, pr PullRequest) (string, error) {
 	pr.Draft = true
-	body, err := json.Marshal(pr)
+	payload, err := json.Marshal(pr)
 	if err != nil {
 		return "", err
 	}
 	url := strings.TrimSuffix(c.APIURL, "/") + "/repos/" + owner + "/" + name + "/pulls"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return "", err
 	}
@@ -53,22 +55,19 @@ func (c *Client) OpenDraftPR(ctx context.Context, owner, name string, pr PullReq
 		return "", err
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, responseBodyMax))
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusCreated {
-		excerpt := strings.TrimSpace(string(respBody))
-		if len(excerpt) > errorBodyMax {
-			excerpt = excerpt[:errorBodyMax]
-		}
-		return "", fmt.Errorf("create pull request: status %d: %s", resp.StatusCode, excerpt)
+		excerpt := strings.TrimSpace(string(body))
+		return "", fmt.Errorf("create pull request: status %d: %s", resp.StatusCode, excerpt[:min(len(excerpt), errorBodyMax)])
 	}
 	var created struct {
 		HTMLURL string `json:"html_url"`
 	}
-	if err := json.Unmarshal(respBody, &created); err != nil || created.HTMLURL == "" {
-		return "", fmt.Errorf("create pull request: no html_url in response")
+	if json.Unmarshal(body, &created) != nil || created.HTMLURL == "" {
+		return "", errors.New("create pull request: no html_url in response")
 	}
 	return created.HTMLURL, nil
 }

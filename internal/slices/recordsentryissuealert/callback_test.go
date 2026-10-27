@@ -14,7 +14,8 @@ import (
 	"testing"
 
 	"heinzel/internal/events"
-	"heinzel/internal/eventstore"
+	"heinzel/internal/platform/app"
+	"heinzel/internal/platform/eventstore"
 	"heinzel/internal/slices/recordsentryissuealert"
 )
 
@@ -98,18 +99,16 @@ func newStore(t *testing.T) *eventstore.Store {
 	return s
 }
 
-// newMux registers the slice's route on a fresh mux backed by store. The
-// slice reads secret from its env, so a signed request is accepted only if
-// that secret is the key it verifies with.
-func newMux(t *testing.T, store *eventstore.Store) *http.ServeMux {
+// newRouter serves the slice's route, as the app does, on store. The slice
+// reads secret from its env, so a signed request is accepted only if that
+// secret is the key it verifies with.
+func newRouter(t *testing.T, store *eventstore.Store) http.Handler {
 	t.Helper()
 	sc, err := recordsentryissuealert.New(env(map[string]string{"SENTRY_CLIENT_SECRET": secret}), slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("new slice: %v", err)
 	}
-	mux := http.NewServeMux()
-	mux.Handle(sc.Pattern, sc.Handler(store))
-	return mux
+	return app.Router(store, []app.StateChange{sc})
 }
 
 type request struct {
@@ -123,7 +122,7 @@ func signed(body string) request {
 	return request{body: body, resource: "event_alert", signature: sign(secret, body)}
 }
 
-func post(mux *http.ServeMux, r request) *httptest.ResponseRecorder {
+func post(router http.Handler, r request) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/sentry/callback", strings.NewReader(r.body))
 	req.Header.Set("Content-Type", "application/json")
 	if r.resource != "" {
@@ -133,7 +132,7 @@ func post(mux *http.ServeMux, r request) *httptest.ResponseRecorder {
 		req.Header.Set("Sentry-Hook-Signature", r.signature)
 	}
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	router.ServeHTTP(rec, req)
 	return rec
 }
 
@@ -166,7 +165,7 @@ func assertStored(t *testing.T, s *eventstore.Store, want int) {
 func TestValidAlertIsRecorded(t *testing.T) {
 	s := newStore(t)
 
-	rec := post(newMux(t, s), signed(eventAlertFixture))
+	rec := post(newRouter(t, s), signed(eventAlertFixture))
 
 	assertStatus(t, rec, http.StatusOK)
 	stored := storedEvents(t, s)
@@ -175,7 +174,7 @@ func TestValidAlertIsRecorded(t *testing.T) {
 	}
 	e := stored[0]
 	streamHash := sha256.Sum256([]byte("aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4\x00Very Important Alert Rule!"))
-	if e.Type != "SentryIssueAlertReceived" || e.StreamID != "sentry-issue-alert-"+hex.EncodeToString(streamHash[:]) || e.Version != 1 {
+	if e.Type != "SentryIssueAlertReceived" || e.Stream != "sentry-issue-alert-"+hex.EncodeToString(streamHash[:]) || e.Version != 1 {
 		t.Fatalf("got event %+v", e)
 	}
 	var got map[string]any
@@ -216,7 +215,7 @@ func TestBadSignatureIsUnauthorizedAndStoresNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := newStore(t)
 
-			rec := post(newMux(t, s), request{body: body, resource: "event_alert", signature: signature})
+			rec := post(newRouter(t, s), request{body: body, resource: "event_alert", signature: signature})
 
 			assertStatus(t, rec, http.StatusUnauthorized)
 			assertStored(t, s, 0)
@@ -231,7 +230,7 @@ func TestOtherResourcesAreAcknowledgedAndStoreNothing(t *testing.T) {
 			r := signed(eventAlertFixture)
 			r.resource = resource
 
-			rec := post(newMux(t, s), r)
+			rec := post(newRouter(t, s), r)
 
 			assertStatus(t, rec, http.StatusOK)
 			assertStored(t, s, 0)
@@ -241,10 +240,10 @@ func TestOtherResourcesAreAcknowledgedAndStoreNothing(t *testing.T) {
 
 func TestRedeliveredAlertIsStoredOnce(t *testing.T) {
 	s := newStore(t)
-	mux := newMux(t, s)
+	router := newRouter(t, s)
 
-	first := post(mux, signed(alert(t, "event-1", "rule-a")))
-	second := post(mux, signed(alert(t, "event-1", "rule-a")))
+	first := post(router, signed(alert(t, "event-1", "rule-a")))
+	second := post(router, signed(alert(t, "event-1", "rule-a")))
 
 	assertStatus(t, first, http.StatusOK)
 	assertStatus(t, second, http.StatusOK)
@@ -253,10 +252,10 @@ func TestRedeliveredAlertIsStoredOnce(t *testing.T) {
 
 func TestSameEventTriggeringAnotherRuleIsANewAlert(t *testing.T) {
 	s := newStore(t)
-	mux := newMux(t, s)
+	router := newRouter(t, s)
 
-	assertStatus(t, post(mux, signed(alert(t, "event-1", "rule-a"))), http.StatusOK)
-	assertStatus(t, post(mux, signed(alert(t, "event-1", "rule-b"))), http.StatusOK)
+	assertStatus(t, post(router, signed(alert(t, "event-1", "rule-a"))), http.StatusOK)
+	assertStatus(t, post(router, signed(alert(t, "event-1", "rule-b"))), http.StatusOK)
 
 	assertStored(t, s, 2)
 }
@@ -264,7 +263,7 @@ func TestSameEventTriggeringAnotherRuleIsANewAlert(t *testing.T) {
 func TestIDsAreStoredAsSent(t *testing.T) {
 	s := newStore(t)
 
-	assertStatus(t, post(newMux(t, s), signed(alert(t, " event-1 ", " rule-a "))), http.StatusOK)
+	assertStatus(t, post(newRouter(t, s), signed(alert(t, " event-1 ", " rule-a "))), http.StatusOK)
 
 	var got events.SentryIssueAlertReceived
 	if err := json.Unmarshal(storedEvents(t, s)[0].Payload, &got); err != nil {
@@ -297,7 +296,7 @@ func TestInvalidAlertIsBadRequestAndStoresNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := newStore(t)
 
-			rec := post(newMux(t, s), signed(body))
+			rec := post(newRouter(t, s), signed(body))
 
 			assertStatus(t, rec, http.StatusBadRequest)
 			assertStored(t, s, 0)
@@ -309,20 +308,36 @@ func TestOversizedBodyIsRejectedAndStoresNothing(t *testing.T) {
 	s := newStore(t)
 	body := `{"data":{"event":{"event_id":"e1","issue_id":"1","title":"` + strings.Repeat("x", 10<<20) + `"},"triggered_rule":"rule-a"}}`
 
-	rec := post(newMux(t, s), signed(body))
+	rec := post(newRouter(t, s), signed(body))
 
 	assertStatus(t, rec, http.StatusRequestEntityTooLarge)
 	assertStored(t, s, 0)
 }
 
+func TestOversizedBodyClosesTheConnection(t *testing.T) {
+	srv := httptest.NewServer(newRouter(t, newStore(t)))
+	defer srv.Close()
+	body := strings.Repeat("x", 10<<20+1)
+
+	resp, err := srv.Client().Post(srv.URL+"/sentry/callback", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge || !resp.Close {
+		t.Fatalf("got status %d, close %v; want %d and the connection closed", resp.StatusCode, resp.Close, http.StatusRequestEntityTooLarge)
+	}
+}
+
 func TestStoreFailureIsInternalErrorWithoutDetails(t *testing.T) {
 	s := newStore(t)
-	mux := newMux(t, s)
+	router := newRouter(t, s)
 	if err := s.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}
 
-	rec := post(mux, signed(eventAlertFixture))
+	rec := post(router, signed(eventAlertFixture))
 
 	assertStatus(t, rec, http.StatusInternalServerError)
 	if strings.Contains(rec.Body.String(), "database") {
@@ -333,7 +348,7 @@ func TestStoreFailureIsInternalErrorWithoutDetails(t *testing.T) {
 func TestSignatureIsCheckedBeforeDecoding(t *testing.T) {
 	s := newStore(t)
 
-	rec := post(newMux(t, s), request{body: `{"data":`, resource: "event_alert", signature: sign("other-secret", `{"data":`)})
+	rec := post(newRouter(t, s), request{body: `{"data":`, resource: "event_alert", signature: sign("other-secret", `{"data":`)})
 
 	assertStatus(t, rec, http.StatusUnauthorized)
 }
@@ -347,7 +362,7 @@ func recordedPayload(t *testing.T, event map[string]any) map[string]any {
 		t.Fatalf("encode body: %v", err)
 	}
 	s := newStore(t)
-	assertStatus(t, post(newMux(t, s), signed(string(body))), http.StatusOK)
+	assertStatus(t, post(newRouter(t, s), signed(string(body))), http.StatusOK)
 	stored := storedEvents(t, s)
 	if len(stored) != 1 {
 		t.Fatalf("stored %d events, want 1", len(stored))

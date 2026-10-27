@@ -9,18 +9,17 @@ import (
 	"heinzel/internal/slices/investigatesentryissue/workspace"
 )
 
-// workspaceCloner clones each investigation's repo into a workspace of its
-// own, where Claude runs in a sandboxed child process.
+// workspaceCloner gives each investigation a workspace of its own, where
+// Claude runs in a sandboxed child process.
 type workspaceCloner struct {
-	cfg config
-	// cloneBase is the clone URL base: a repo is cloned from
-	// <cloneBase><owner>/<repo>.git.
-	cloneBase string
+	cfg       config
+	cloneBase string // repos are cloned from <cloneBase><owner>/<repo>.git
 	logger    *slog.Logger
 }
 
 func (c *workspaceCloner) clone(ctx context.Context, issueID string, target repo, branch string) (run, error) {
-	ws, err := workspace.New(ctx, c.cfg.workDir, c.cloneBase+target.owner+"/"+target.name+".git", branch, c.cfg.path, c.cfg.githubToken)
+	url := c.cloneBase + target.owner + "/" + target.name + ".git"
+	ws, err := workspace.New(ctx, c.cfg.workDir, url, branch, c.cfg.path, c.cfg.githubToken)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +35,7 @@ type workspaceRun struct {
 }
 
 func (r *workspaceRun) claude(ctx context.Context, prompt string) (string, error) {
-	cmd, err := claude.Command(claudeConfig(r.cfg), r.ws, prompt)
+	cmd, err := claude.Command(claudeConfig(r.cfg), claudeDirs(r.ws), prompt)
 	if err != nil {
 		return "", err
 	}
@@ -63,7 +62,6 @@ func (r *workspaceRun) remove() {
 	}
 }
 
-// claudeConfig is what a claude run needs from cfg.
 func claudeConfig(cfg config) claude.Config {
 	return claude.Config{
 		Bin:          cfg.claudeBin,
@@ -74,6 +72,18 @@ func claudeConfig(cfg config) claude.Config {
 		ParentHome:   cfg.parentHome,
 		DenyRead:     cfg.denyRead,
 		Readable:     cfg.readable,
+	}
+}
+
+func claudeDirs(ws *workspace.Workspace) claude.Dirs {
+	return claude.Dirs{
+		WorkDir:      ws.WorkDir,
+		Siblings:     ws.Siblings,
+		Clone:        ws.Clone,
+		Home:         ws.Home,
+		ClaudeConfig: ws.ClaudeConfig,
+		Mirror:       ws.Mirror,
+		GitHome:      ws.GitHome,
 	}
 }
 

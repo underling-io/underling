@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/app"
-	"heinzel/internal/eventhandler"
 	"heinzel/internal/events"
-	"heinzel/internal/eventstore"
+	"heinzel/internal/platform/app"
+	"heinzel/internal/platform/eventhandler"
+	"heinzel/internal/platform/eventstore"
 	"heinzel/internal/slices/investigatesentryissue"
 )
 
@@ -229,7 +229,7 @@ func alert(position uint64, project int64, ts time.Time) eventstore.Event {
 		Frames:         []events.SentryStackFrame{{File: "example.js", Function: "runner", Line: 3}},
 	})
 	return eventstore.Event{
-		StreamID:  "sentry-issue-alert-x",
+		Stream:    "sentry-issue-alert-x",
 		Version:   1,
 		Position:  position,
 		Type:      events.SentryIssueAlertReceivedType,
@@ -247,7 +247,7 @@ func (h *harness) investigation(id string) []eventstore.Event {
 	}
 	var stream []eventstore.Event
 	for _, e := range all {
-		if e.StreamID == "sentry-issue-investigation-"+id {
+		if e.Stream == "sentry-issue-investigation-"+id {
 			stream = append(stream, e)
 		}
 	}

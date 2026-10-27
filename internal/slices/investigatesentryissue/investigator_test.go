@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"heinzel/internal/events"
-	"heinzel/internal/eventstore"
+	"heinzel/internal/platform/eventstore"
 )
 
 // These tests specify the investigator's decisions, in memory: given the
@@ -284,7 +284,7 @@ func (s *spec) then(want ...event) *spec {
 		s.t.Fatalf("the alert added %s, want %s; logs:\n%s", describeStored(added), describeWanted(s.t, want), s.logs)
 	}
 	for i, w := range want {
-		if added[i].StreamID != streamID(testIssueID) || added[i].Type != w.typ || !bytes.Equal(added[i].Payload, w.new(s.t).Payload) {
+		if added[i].Stream != streamID(testIssueID) || added[i].Type != w.typ || !bytes.Equal(added[i].Payload, w.new(s.t).Payload) {
 			s.t.Fatalf("the alert added %s, want %s", describeStored(added), describeWanted(s.t, want))
 		}
 	}
@@ -383,7 +383,7 @@ func failed(stage, reason string) event {
 func describeStored(stored []eventstore.Event) string {
 	var parts []string
 	for _, e := range stored {
-		parts = append(parts, e.StreamID+": "+e.Type+" "+string(e.Payload))
+		parts = append(parts, e.Stream+": "+e.Type+" "+string(e.Payload))
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }
@@ -428,7 +428,7 @@ func alertEvent(project int64, stored time.Time) eventstore.Event {
 		Frames:         []events.SentryStackFrame{{File: "example.js", Function: "runner", Line: 3}},
 	})
 	return eventstore.Event{
-		StreamID:  "sentry-issue-alert-x",
+		Stream:    "sentry-issue-alert-x",
 		Version:   1,
 		Position:  5,
 		Type:      events.SentryIssueAlertReceivedType,

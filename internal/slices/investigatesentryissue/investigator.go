@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"heinzel/internal/events"
-	"heinzel/internal/eventstore"
+	"heinzel/internal/platform/eventstore"
 )
 
-// handlerName is the checkpoint key; never change it.
+// handlerName is the handler's checkpoint key; never change it.
 const handlerName = "sentry-issue-investigator"
 
 // investigator investigates each new Sentry issue once.
@@ -21,21 +21,55 @@ type investigator struct {
 	ctx    context.Context // cancelled when heinzel shuts down
 	store  *eventstore.Store
 	logger *slog.Logger
-	// staleBefore is the handler's start time minus the max age. Alerts
-	// stored before it are past alerts, never investigated; alerts stored
-	// later are live, however long the backlog delays them.
+	// staleBefore is the handler's start minus the max age. Alerts stored
+	// before it are past alerts; alerts stored later are live, however long
+	// a backlog delays them.
 	staleBefore time.Time
 	repos       map[int64]repo // by Sentry project id
 	cloner      cloner
 	prs         prOpener
 }
 
+// cloner gets each investigation a fresh clone to work in.
+type cloner interface {
+	clone(ctx context.Context, issueID string, target repo, branch string) (run, error)
+}
+
+// run is one investigation's clone, and Claude working in it.
+type run interface {
+	// claude runs Claude with prompt and returns its summary. If Claude ran
+	// out of time, timedOut(err) holds.
+	claude(ctx context.Context, prompt string) (summary string, err error)
+	// strayBranches lists the branches besides the investigation branch
+	// that hold commits heinzel won't push.
+	strayBranches(ctx context.Context) ([]string, error)
+	// newCommits counts the investigation branch's new commits. It runs
+	// after strayBranches.
+	newCommits(ctx context.Context) (int, error)
+	// changedPaths lists the paths those commits change.
+	changedPaths(ctx context.Context) ([]string, error)
+	push(ctx context.Context) error
+	// defaultBranch is the branch the PR targets.
+	defaultBranch() string
+	// remove deletes the clone, logging any failure.
+	remove()
+}
+
+// prOpener opens draft pull requests.
+type prOpener interface {
+	openDraft(ctx context.Context, target repo, pr pullRequest) (url string, err error)
+}
+
+type pullRequest struct {
+	title, head, base, body string
+}
+
 // Name implements eventhandler.Handler.
 func (*investigator) Name() string { return handlerName }
 
-// Handle implements eventhandler.Handler. It ignores other event types and,
-// since it cannot fail, logs and skips payloads it cannot decode. Every
-// investigation ends in a recorded outcome; failures never escape.
+// Handle implements eventhandler.Handler. It ignores other events, and
+// logs and skips an alert it can't decode. Every investigation it starts
+// ends in a recorded outcome.
 func (h *investigator) Handle(e eventstore.Event) {
 	if e.Type != events.SentryIssueAlertReceivedType {
 		return
@@ -49,29 +83,25 @@ func (h *investigator) Handle(e eventstore.Event) {
 	stream := streamID(alert.IssueID)
 
 	if e.Timestamp.Before(h.staleBefore) {
-		h.recordFirst(log, stream, skippedOutcome(alert.IssueID, events.InvestigationSkippedStale))
+		h.record(log, stream, 0, skippedOutcome(alert.IssueID, events.InvestigationSkippedStale))
 		return
 	}
 	target, mapped := h.repos[alert.Project]
 	if !mapped {
-		h.recordFirst(log, stream, skippedOutcome(alert.IssueID, events.InvestigationSkippedUnmapped))
-		return
-	}
-
-	branch := branchName(alert.IssueID)
-	started, err := startedEvent(alert, target, branch)
-	if err != nil {
-		log.Error("encode investigation started", "error", err)
+		h.record(log, stream, 0, skippedOutcome(alert.IssueID, events.InvestigationSkippedUnmapped))
 		return
 	}
 	if h.ctx.Err() != nil {
-		// Record nothing: a Started now would only end in Failed shutdown,
-		// which is final. Note that the runner still checkpoints past the
-		// alert, so only a later alert for the issue starts it.
+		// A Started now could only end as Failed shutdown, which is final.
+		// The runner still checkpoints past the alert, so only a later
+		// alert for the issue starts it.
 		log.Info("heinzel is shutting down; sentry issue alert left unhandled")
 		return
 	}
-	// A conflict here means another alert for the issue got there first.
+	branch := branchName(alert.IssueID)
+	started := newEvent(events.SentryIssueInvestigationStartedType, events.SentryIssueInvestigationStarted{
+		IssueID: alert.IssueID, Project: alert.Project, Repo: target.String(), Branch: branch,
+	})
 	if !h.append(log, stream, 0, started) {
 		return
 	}
@@ -79,8 +109,8 @@ func (h *investigator) Handle(e eventstore.Event) {
 	h.record(log, stream, 1, h.investigate(alert, target, branch))
 }
 
-// investigate clones target, lets Claude work on branch, and pushes and
-// opens a draft PR if it committed anything. Once heinzel shuts down, any
+// investigate clones target, lets Claude work on branch, and pushes it and
+// opens a draft PR if Claude committed a fix. Once heinzel shuts down, any
 // failure is a shutdown failure.
 func (h *investigator) investigate(alert events.SentryIssueAlertReceived, target repo, branch string) outcome {
 	ctx := h.ctx
@@ -98,10 +128,10 @@ func (h *investigator) investigate(alert events.SentryIssueAlertReceived, target
 	defer run.remove()
 
 	summary, err := run.claude(ctx, investigationPrompt(alert, branch))
-	switch {
-	case timedOut(err):
+	if timedOut(err) {
 		return fail(events.InvestigationFailedTimeout, err)
-	case err != nil:
+	}
+	if err != nil {
 		return fail(events.InvestigationFailedClaude, err)
 	}
 
@@ -143,45 +173,8 @@ func (h *investigator) investigate(alert events.SentryIssueAlertReceived, target
 	return prOpenedOutcome(alert.IssueID, url)
 }
 
-// cloner gets each investigation a fresh clone to work in.
-type cloner interface {
-	// clone clones target and checks out branch for Claude to work on.
-	clone(ctx context.Context, issueID string, target repo, branch string) (run, error)
-}
-
-// run is one investigation's clone, and Claude working in it.
-type run interface {
-	// claude runs Claude with prompt and returns its summary. If Claude ran
-	// past its time limit, timedOut(err) holds.
-	claude(ctx context.Context, prompt string) (summary string, err error)
-	// strayBranches lists the branches other than the investigation branch
-	// that hold commits heinzel won't push.
-	strayBranches(ctx context.Context) ([]string, error)
-	// newCommits counts the investigation branch's new commits. It runs
-	// after strayBranches.
-	newCommits(ctx context.Context) (int, error)
-	// changedPaths lists the paths those commits change.
-	changedPaths(ctx context.Context) ([]string, error)
-	// push pushes the investigation branch to GitHub.
-	push(ctx context.Context) error
-	// defaultBranch is the repo's default branch, which the PR targets.
-	defaultBranch() string
-	// remove deletes the clone, logging any failure.
-	remove()
-}
-
-// prOpener opens draft pull requests on GitHub.
-type prOpener interface {
-	openDraft(ctx context.Context, target repo, pr pullRequest) (url string, err error)
-}
-
-// pullRequest is a pull request to open.
-type pullRequest struct {
-	title, head, base, body string
-}
-
-// timedOut reports whether err says Claude ran past its time limit: it has
-// a Timeout method that returns true, as net and os timeout errors do.
+// timedOut reports whether err says Claude ran out of time: it has a
+// Timeout method reporting true, as net and os timeout errors do.
 func timedOut(err error) bool {
 	var t interface{ Timeout() bool }
 	return errors.As(err, &t) && t.Timeout()

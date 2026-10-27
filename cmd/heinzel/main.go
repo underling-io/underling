@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"heinzel/internal/app"
+	"heinzel/internal/platform/app"
 	_ "heinzel/internal/slices" // registers every slice with the app
 )
 

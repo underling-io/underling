@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-// DefaultDir is a work dir in the OS temp dir, which is per-user on Windows.
+// DefaultDir is a work dir in the temp dir, which is per user on Windows.
 func DefaultDir() string {
 	return filepath.Join(os.TempDir(), defaultDirName)
 }

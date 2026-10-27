@@ -7,9 +7,9 @@ import (
 	"syscall"
 )
 
-// killProcessGroup runs c in its own process group and makes cancelling its
-// context kill the whole group, so the tools Claude started die with it.
-func killProcessGroup(c *exec.Cmd) {
+// killProcessGroupOnCancel runs c in a process group of its own and makes
+// cancelling it kill the whole group, so the tools Claude started die too.
+func killProcessGroupOnCancel(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	c.Cancel = func() error {
 		return syscall.Kill(-c.Process.Pid, syscall.SIGKILL)

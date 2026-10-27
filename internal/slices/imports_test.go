@@ -1,11 +1,12 @@
 package slices_test
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
-	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -14,34 +15,32 @@ import (
 )
 
 const (
-	modulePath = "heinzel"
-	slicesPath = modulePath + "/internal/slices"
+	modulePath   = "heinzel"
+	slicesPath   = modulePath + "/internal/slices"
+	eventsPath   = modulePath + "/internal/events"
+	platformPath = modulePath + "/internal/platform"
 )
 
-// allowedShared are the only non-stdlib packages a slice may import: the
-// shared event contracts and generic infrastructure.
-var allowedShared = map[string]bool{
-	modulePath + "/internal/events":       true,
-	modulePath + "/internal/eventstore":   true,
-	modulePath + "/internal/eventhandler": true,
-	modulePath + "/internal/app":          true,
-}
+func within(path, root string) bool { return path == root || strings.HasPrefix(path, root+"/") }
 
-// isStdlib applies the go command's rule (no dot in the first path element),
-// but first excludes this module, whose path has no dot either.
-func isStdlib(path string) bool {
-	if path == modulePath || strings.HasPrefix(path, modulePath+"/") {
-		return false
+// sliceMayImport reports whether the slice at import path self (or one of
+// its sub-packages) may import path: anything outside this module (the
+// stdlib and third-party libraries), the shared events, the shared
+// platform packages, and the slice's own packages. Never another slice.
+func sliceMayImport(self string) func(path string) bool {
+	return func(path string) bool {
+		return !within(path, modulePath) || path == eventsPath || within(path, platformPath) || within(path, self)
 	}
-	first, _, _ := strings.Cut(path, "/")
-	return !strings.Contains(first, ".")
 }
 
-// imports returns the import paths of every .go file under dir, tests included,
-// keyed by file.
-func imports(t *testing.T, dir string) map[string][]string {
-	t.Helper()
-	found := map[string][]string{}
+// platformMayImport reports whether a shared platform package may import
+// path: anything but a slice, so that slices cannot share code through it.
+func platformMayImport(path string) bool { return !within(path, slicesPath) }
+
+// importViolations lists the imports in the .go files under dir (tests and
+// sub-packages included) that allowed rejects.
+func importViolations(dir string, allowed func(path string) bool) ([]string, error) {
+	var violations []string
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || filepath.Ext(path) != ".go" {
 			return err
@@ -51,44 +50,110 @@ func imports(t *testing.T, dir string) map[string][]string {
 			return err
 		}
 		for _, spec := range f.Imports {
-			importPath, err := strconv.Unquote(spec.Path.Value)
+			imported, err := strconv.Unquote(spec.Path.Value)
 			if err != nil {
 				return err
 			}
-			found[path] = append(found[path], importPath)
+			if !allowed(imported) {
+				rel, _ := filepath.Rel(dir, path)
+				violations = append(violations, fmt.Sprintf("%s imports %s", filepath.ToSlash(rel), imported))
+			}
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("parse %s: %v", dir, err)
-	}
-	return found
+	return violations, err
 }
 
-func TestSlicesImportOnlyStdlibSharedEventsAndInfrastructure(t *testing.T) {
+func TestSlicesImportOnlySharedEventsPlatformAndTheirOwnPackages(t *testing.T) {
 	for _, dir := range mustSliceDirs(t) {
-		self := slicesPath + "/" + dir
-		for file, paths := range imports(t, dir) {
-			for _, path := range paths {
-				ownPackage := path == self || strings.HasPrefix(path, self+"/")
-				if !isStdlib(path) && !allowedShared[path] && !ownPackage {
-					t.Errorf("%s imports %s; slices may only import the stdlib, their own package and %v", file, path, slices.Sorted(maps.Keys(allowedShared)))
+		violations, err := importViolations(dir, sliceMayImport(slicesPath+"/"+dir))
+		if err != nil {
+			t.Fatalf("scan %s: %v", dir, err)
+		}
+		for _, v := range violations {
+			t.Errorf("slice %s: %s; a slice may import only the stdlib, third-party libraries, %s, %s/... and its own packages", dir, v, eventsPath, platformPath)
+		}
+	}
+}
+
+func TestThePlatformImportsNoSlice(t *testing.T) {
+	violations, err := importViolations("../platform", platformMayImport)
+	if err != nil {
+		t.Fatalf("scan platform: %v", err)
+	}
+	for _, v := range violations {
+		t.Errorf("platform: %s; the platform may not import %s/...", v, slicesPath)
+	}
+}
+
+func TestPlatformMayImport(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"net/http", true},
+		{"github.com/gin-gonic/gin", true},
+		{"heinzel/internal/events", true},
+		{"heinzel/internal/platform/eventstore", true},
+		{"heinzel/internal/slicesx", true},
+		{"heinzel/internal/slices", false},
+		{"heinzel/internal/slices/alpha", false},
+		{"heinzel/internal/slices/alpha/git", false},
+	}
+	for _, tt := range tests {
+		if got := platformMayImport(tt.path); got != tt.want {
+			t.Errorf("platformMayImport(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestImportViolations(t *testing.T) {
+	const self = slicesPath + "/alpha"
+	tests := []struct {
+		name  string
+		files map[string]string // path in the slice dir -> its imports
+		want  []string
+	}{
+		{"allowed", map[string]string{
+			"alpha.go":      `"context"; "github.com/gin-gonic/gin"; "heinzel/internal/events"; "heinzel/internal/platform/app"; "heinzel/internal/slices/alpha/git"`,
+			"alpha_test.go": `"testing"; "heinzel/internal/platform/eventstore"; "heinzel/internal/slices/alpha"`,
+			"git/git.go":    `"os/exec"; "heinzel/internal/slices/alpha/git/internal"`,
+		}, nil},
+		{"another slice", map[string]string{"alpha.go": `"heinzel/internal/slices/beta"`}, []string{"alpha.go imports heinzel/internal/slices/beta"}},
+		{"another slice in a test", map[string]string{"alpha_test.go": `"heinzel/internal/slices/beta"`}, []string{"alpha_test.go imports heinzel/internal/slices/beta"}},
+		{"a sibling slice from a sub-package", map[string]string{"git/git.go": `"heinzel/internal/slices/beta/git"`}, []string{"git/git.go imports heinzel/internal/slices/beta/git"}},
+		{"a slice sharing its name prefix", map[string]string{"alpha.go": `"heinzel/internal/slices/alphabet"`}, []string{"alpha.go imports heinzel/internal/slices/alphabet"}},
+		{"the slices parent", map[string]string{"alpha.go": `"heinzel/internal/slices"`}, []string{"alpha.go imports heinzel/internal/slices"}},
+		{"a non-shared package", map[string]string{"alpha.go": `"heinzel/internal/util"`}, []string{"alpha.go imports heinzel/internal/util"}},
+		{"a package under events", map[string]string{"alpha.go": `"heinzel/internal/events/helpers"`}, []string{"alpha.go imports heinzel/internal/events/helpers"}},
+		{"a package posing as platform", map[string]string{"alpha.go": `"heinzel/internal/platformx"`}, []string{"alpha.go imports heinzel/internal/platformx"}},
+		{"the main package", map[string]string{"alpha.go": `"heinzel/cmd/heinzel"`}, []string{"alpha.go imports heinzel/cmd/heinzel"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for file, imports := range tt.files {
+				path := filepath.Join(dir, filepath.FromSlash(file))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				src := "package p\n\nimport (" + strings.ReplaceAll(imports, ";", "\n") + ")\n"
+				if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+					t.Fatal(err)
 				}
 			}
-		}
+
+			got, err := importViolations(dir, sliceMayImport(self))
+
+			if err != nil || !slices.Equal(got, tt.want) {
+				t.Fatalf("got %q, %v; want %q", got, err, tt.want)
+			}
+		})
 	}
 }
 
-func TestEventsPackageHoldsOnlyContracts(t *testing.T) {
-	const dir = "../events"
-	for file, paths := range imports(t, dir) {
-		for _, path := range paths {
-			if !isStdlib(path) {
-				t.Errorf("%s imports %s; the events package may only import the stdlib", file, path)
-			}
-		}
-	}
-	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+func TestTheEventsPackageHoldsOnlyContracts(t *testing.T) {
+	files, err := filepath.Glob("../events/*.go")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("found no events files (err %v)", err)
 	}
@@ -96,6 +161,13 @@ func TestEventsPackageHoldsOnlyContracts(t *testing.T) {
 		f, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", file, err)
+		}
+		for _, spec := range f.Imports {
+			path, _ := strconv.Unquote(spec.Path.Value)
+			first, _, _ := strings.Cut(path, "/")
+			if strings.Contains(first, ".") || first == modulePath {
+				t.Errorf("%s imports %s; the events package may import only the stdlib", file, path)
+			}
 		}
 		for _, decl := range f.Decls {
 			if fn, ok := decl.(*ast.FuncDecl); ok {

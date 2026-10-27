@@ -7,21 +7,8 @@ import (
 	"heinzel/internal/events"
 )
 
-// issueDetails is the Sentry issue as handed to Claude.
-type issueDetails struct {
-	IssueID        string                    `json:"issueId"`
-	Project        int64                     `json:"project"`
-	Title          string                    `json:"title"`
-	Level          string                    `json:"level"`
-	WebURL         string                    `json:"webUrl"`
-	Culprit        string                    `json:"culprit,omitempty"`
-	ExceptionType  string                    `json:"exceptionType,omitempty"`
-	ExceptionValue string                    `json:"exceptionValue,omitempty"`
-	Frames         []events.SentryStackFrame `json:"frames,omitempty"`
-}
-
-// maxPromptTitleRunes caps the alert title in the prompt. The other
-// exception details are capped when the alert is recorded.
+// maxPromptTitleRunes caps the alert title in the prompt; the other
+// details were capped when the alert was recorded.
 const maxPromptTitleRunes = 2000
 
 const promptInstructions = `Investigate and fix the Sentry issue below in this repository.
@@ -36,9 +23,22 @@ const promptInstructions = `Investigate and fix the Sentry issue below in this r
 Sentry issue:
 `
 
-// investigationPrompt asks Claude to investigate and fix alert's issue with
-// auto-task on branch. It starts with the /at:auto-task command, so the
-// skill is expanded even though bare mode doesn't list skills to Claude.
+// issueDetails is the Sentry issue as Claude gets it.
+type issueDetails struct {
+	IssueID        string                    `json:"issueId"`
+	Project        int64                     `json:"project"`
+	Title          string                    `json:"title"`
+	Level          string                    `json:"level"`
+	WebURL         string                    `json:"webUrl"`
+	Culprit        string                    `json:"culprit,omitempty"`
+	ExceptionType  string                    `json:"exceptionType,omitempty"`
+	ExceptionValue string                    `json:"exceptionValue,omitempty"`
+	Frames         []events.SentryStackFrame `json:"frames,omitempty"`
+}
+
+// investigationPrompt asks Claude to fix alert's issue with auto-task on
+// branch. It starts with the /at:auto-task command because bare mode
+// doesn't list skills to Claude.
 func investigationPrompt(alert events.SentryIssueAlertReceived, branch string) string {
 	details, _ := json.MarshalIndent(issueDetails{
 		IssueID:        alert.IssueID,

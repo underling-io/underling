@@ -1,7 +1,7 @@
 ---
 title: Rewrite heinzel in Rust
 date: 2026-10-25
-status: in-dev
+status: rejected
 type: tech
 ---
 
@@ -69,3 +69,5 @@ Rewrite heinzel in idiomatic Rust, with the same behaviour as the Go version: HT
 | 02  | Record Sentry issue alert slice        | 011.02-rust-record-sentry-alert.md | done |
 | 03  | Investigate Sentry issue slice         | 011.03-rust-investigate-sentry-issue.md | done |
 | 04  | Cutover: e2e, build, docs, delete Go   | 011.04-rust-cutover.md           | new    |
+
+> Superseded by task 012 (rewrite in Go with mainstream frameworks).

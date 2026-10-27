@@ -3,16 +3,22 @@
 //	POST /sentry/callback → "Record Sentry issue alert" → SentryIssueAlertReceived
 //
 // It verifies a Sentry internal-integration webhook and records each issue
-// alert. It loads the integration's client secret from SENTRY_CLIENT_SECRET.
+// alert once. It reads the integration's client secret from
+// SENTRY_CLIENT_SECRET.
 package recordsentryissuealert
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
-	"heinzel/internal/app"
-	"heinzel/internal/eventstore"
+	"github.com/gin-gonic/gin"
+
+	"heinzel/internal/platform/app"
+	"heinzel/internal/platform/eventstore"
 )
+
+const secretEnvVar = "SENTRY_CLIENT_SECRET"
 
 func init() {
 	app.RegisterStateChange(func(d app.Deps) (app.StateChange, error) {
@@ -20,18 +26,19 @@ func init() {
 	})
 }
 
-// New returns the slice, serving POST /sentry/callback. It reads the internal
-// integration's client secret, used to verify webhook signatures, from
-// SENTRY_CLIENT_SECRET through getenv, and fails if it is missing or empty.
+// New returns the slice. It reads the client secret that signs the
+// webhooks through getenv and fails if it is missing or empty.
 func New(getenv func(string) string, logger *slog.Logger) (app.StateChange, error) {
-	secret, err := secretFromEnv(getenv)
-	if err != nil {
-		return app.StateChange{}, err
+	secret := getenv(secretEnvVar)
+	if secret == "" {
+		return app.StateChange{}, errors.New(secretEnvVar + " must be set")
 	}
 	return app.StateChange{
-		Pattern: "POST /sentry/callback",
-		Handler: func(store *eventstore.Store) http.Handler {
-			return &callback{secret: []byte(secret), store: store, logger: logger}
+		Method: http.MethodPost,
+		Path:   "/sentry/callback",
+		Handler: func(store *eventstore.Store) gin.HandlerFunc {
+			cb := &callback{secret: []byte(secret), store: store, logger: logger}
+			return cb.handle
 		},
 	}, nil
 }
