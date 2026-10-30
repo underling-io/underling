@@ -35,26 +35,19 @@ import (
 func init() {
 	app.RegisterAutomation(func(d app.Deps) (app.Automation, error) {
 		return New(Params{
-			Getenv:         d.Getenv,
-			Logger:         d.Logger,
-			GitHubAPIURL:   "https://api.github.com",
-			GitHubCloneURL: "https://github.com/",
-			HTTPClient:     &http.Client{Timeout: 30 * time.Second},
-			Now:            time.Now,
+			Getenv:     d.Getenv,
+			Logger:     d.Logger,
+			HTTPClient: &http.Client{Timeout: 30 * time.Second},
+			Now:        time.Now,
 		})
 	})
 }
 
 // Params is what New needs.
 type Params struct {
-	Getenv func(string) string // the slice's config, like os.Getenv
-	Logger *slog.Logger
-	// GitHubAPIURL is the REST API base, e.g. https://api.github.com.
-	GitHubAPIURL string
-	// GitHubCloneURL is the clone URL base: a repo is cloned from
-	// <GitHubCloneURL><owner>/<repo>.git.
-	GitHubCloneURL string
-	HTTPClient     *http.Client
+	Getenv     func(string) string // the slice's config, like os.Getenv
+	Logger     *slog.Logger
+	HTTPClient *http.Client
 	// Now is read once, when the handler is built: alerts stored more than
 	// the max age before then are stale.
 	Now func() time.Time
@@ -93,8 +86,8 @@ func New(p Params) (app.Automation, error) {
 				logger:      p.Logger,
 				staleBefore: p.Now().Add(-cfg.maxAge),
 				repos:       cfg.repos,
-				cloner:      &workspaceCloner{cfg: cfg, cloneBase: p.GitHubCloneURL, logger: p.Logger},
-				prs:         githubPROpener{&github.Client{APIURL: p.GitHubAPIURL, Token: cfg.githubToken, HTTP: p.HTTPClient}},
+				cloner:      &workspaceCloner{cfg: cfg, logger: p.Logger},
+				prs:         githubPROpener{&github.Client{APIURL: cfg.apiURL, Token: cfg.githubToken, HTTP: p.HTTPClient}},
 			}
 		},
 	}, nil

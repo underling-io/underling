@@ -3,6 +3,7 @@ package investigatesentryissue
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -24,6 +25,8 @@ const (
 	claudeBinEnvVar  = "CLAUDE_BIN"
 	workDirEnvVar    = "INVESTIGATION_WORK_DIR"
 	denyReadEnvVar   = "INVESTIGATION_DENY_READ"
+	apiURLEnvVar     = "GITHUB_API_URL"
+	cloneURLEnvVar   = "GITHUB_CLONE_URL"
 )
 
 // repo is a GitHub repository.
@@ -50,7 +53,9 @@ type config struct {
 	// readable are the paths under denied ones that sandboxed commands
 	// still need: the plugin dirs and the claude binary's dir. Set by
 	// resolveReadPaths.
-	readable []string
+	readable  []string
+	apiURL    string // the GitHub REST API base
+	cloneBase string // repos are cloned from <cloneBase><owner>/<repo>.git
 }
 
 // loadConfig reads the settings through getenv. It reports every invalid
@@ -96,6 +101,10 @@ func loadConfig(getenv func(string) string) (config, error) {
 	check(maxAgeEnvVar, err)
 	cfg.denyRead, err = parsePaths(getenv(denyReadEnvVar))
 	check(denyReadEnvVar, err)
+	cfg.apiURL, err = parseAPIURL(getenv(apiURLEnvVar))
+	check(apiURLEnvVar, err)
+	cfg.cloneBase, err = parseCloneBase(getenv(cloneURLEnvVar))
+	check(cloneURLEnvVar, err)
 	if len(errs) > 0 {
 		return config{}, errors.Join(errs...)
 	}
@@ -199,4 +208,35 @@ func parseDuration(value string, def time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s is not positive", value)
 	}
 	return d, nil
+}
+
+// parseAPIURL parses an absolute http(s) URL without credentials, query or
+// fragment (paths are appended to it), or returns the GitHub API for "".
+func parseAPIURL(value string) (string, error) {
+	if value == "" {
+		return "https://api.github.com", nil
+	}
+	u, err := url.Parse(value)
+	if err != nil {
+		return "", err
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("%q is not an absolute http(s) URL", value)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("%q has credentials, a query or a fragment", value)
+	}
+	return value, nil
+}
+
+// parseCloneBase checks a clone base, a URL or a local dir, ends in "/",
+// or returns GitHub's for "".
+func parseCloneBase(value string) (string, error) {
+	if value == "" {
+		return "https://github.com/", nil
+	}
+	if !strings.HasSuffix(value, "/") {
+		return "", fmt.Errorf("%q does not end in /", value)
+	}
+	return value, nil
 }

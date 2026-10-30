@@ -44,6 +44,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 		claudeBin:   "claude",
 		workDir:     "",
 		path:        "/usr/bin:/bin",
+		apiURL:      "https://api.github.com",
+		cloneBase:   "https://github.com/",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
@@ -60,6 +62,8 @@ func TestLoadConfigReadsEveryVariable(t *testing.T) {
 		"INVESTIGATION_WORK_DIR":  "/var/heinzel",
 		"INVESTIGATION_DENY_READ": " /srv/data , /etc/heinzel/ ",
 		"HOME":                    "/home/heinzel/",
+		"GITHUB_API_URL":          "http://127.0.0.1:8080/api/",
+		"GITHUB_CLONE_URL":        "/srv/remotes/",
 	}))
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
@@ -73,6 +77,9 @@ func TestLoadConfigReadsEveryVariable(t *testing.T) {
 	}
 	if want := []string{"/srv/data", "/etc/heinzel"}; !reflect.DeepEqual(got.denyRead, want) || got.parentHome != "/home/heinzel" {
 		t.Errorf("denyRead = %q and parentHome = %q, want %q and /home/heinzel", got.denyRead, got.parentHome, want)
+	}
+	if got.apiURL != "http://127.0.0.1:8080/api/" || got.cloneBase != "/srv/remotes/" {
+		t.Errorf("apiURL = %q and cloneBase = %q, want http://127.0.0.1:8080/api/ and /srv/remotes/", got.apiURL, got.cloneBase)
 	}
 	if got.timeout != 90*time.Second || got.maxAge != 15*time.Minute || got.claudeBin != "/opt/claude" || got.workDir != "/var/heinzel" {
 		t.Errorf("got %+v", got)
@@ -107,6 +114,14 @@ func TestLoadConfigRejectsInvalidValues(t *testing.T) {
 		{"INVESTIGATION_MAX_AGE", "0"},
 		{"INVESTIGATION_DENY_READ", "relative/dir"},
 		{"INVESTIGATION_DENY_READ", "/a,,/b"},
+		{"GITHUB_API_URL", "api.github.com"},
+		{"GITHUB_API_URL", "ftp://h"},
+		{"GITHUB_API_URL", "https://"},
+		{"GITHUB_API_URL", "/relative"},
+		{"GITHUB_API_URL", "https://u:p@h"},
+		{"GITHUB_API_URL", "https://h/api?x=1"},
+		{"GITHUB_API_URL", "https://h/api#x"},
+		{"GITHUB_CLONE_URL", "https://github.com"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.variable+"="+tt.value, func(t *testing.T) {

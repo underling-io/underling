@@ -237,6 +237,8 @@ The slice reads these when it is built. Any invalid value fails startup with
 | `CLAUDE_BIN` | no | path or name of the `claude` executable | `claude` |
 | `INVESTIGATION_WORK_DIR` | no | directory for the per-run dirs, created (0700) if missing; the child may read only its own run's clone, HOME and Claude config dir in it | `heinzel-investigations-<uid>` in the OS temp dir (`heinzel-investigations` on Windows) |
 | `INVESTIGATION_DENY_READ` | no | comma-separated absolute paths the child may not read, such as heinzel's data dir | |
+| `GITHUB_API_URL` | no | absolute `http` or `https` URL of the GitHub REST API, without credentials, query or fragment; `GITHUB_TOKEN` goes to it, so use `http` only for a local test server | `https://api.github.com` |
+| `GITHUB_CLONE_URL` | no | clone base ending in `/`: a URL or a local dir; repos are cloned (and pushed) at `<base><owner>/<repo>.git`; `GITHUB_TOKEN` goes to it, so use `http` or another host only for a local test remote | `https://github.com/` |
 
 heinzel's own `HOME` is also denied to the child. Neither the work dir nor a
 plugin dir may lie inside `HOME` or an `INVESTIGATION_DENY_READ` path, and no

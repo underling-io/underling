@@ -128,6 +128,8 @@ func newHarness(t *testing.T, mode string, opts ...option) *harness {
 		"INVESTIGATION_WORK_DIR": h.workDir,
 		"PATH":                   os.Getenv("PATH"),
 		"HEINZEL_UNRELATED":      "unrelated-value",
+		"GITHUB_API_URL":         apiBase,
+		"GITHUB_CLONE_URL":       h.remotes + "/",
 	}
 	for _, opt := range opts {
 		opt(env)
@@ -135,12 +137,10 @@ func newHarness(t *testing.T, mode string, opts ...option) *harness {
 	h.github = &fakeGitHub{status: http.StatusCreated, body: `{"number":7,"html_url":"` + prURL + `"}`}
 
 	h.automation, err = investigatesentryissue.New(investigatesentryissue.Params{
-		Getenv:         func(key string) string { return env[key] },
-		Logger:         slog.New(slog.NewJSONHandler(lockedWriter{h.logMu, h.logs}, nil)),
-		GitHubAPIURL:   apiBase,
-		GitHubCloneURL: h.remotes + "/",
-		HTTPClient:     &http.Client{Transport: h.github},
-		Now:            func() time.Time { return h.clock },
+		Getenv:     func(key string) string { return env[key] },
+		Logger:     slog.New(slog.NewJSONHandler(lockedWriter{h.logMu, h.logs}, nil)),
+		HTTPClient: &http.Client{Transport: h.github},
+		Now:        func() time.Time { return h.clock },
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

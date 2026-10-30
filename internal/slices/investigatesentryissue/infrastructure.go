@@ -12,13 +12,12 @@ import (
 // workspaceCloner gives each investigation a workspace of its own, where
 // Claude runs in a sandboxed child process.
 type workspaceCloner struct {
-	cfg       config
-	cloneBase string // repos are cloned from <cloneBase><owner>/<repo>.git
-	logger    *slog.Logger
+	cfg    config
+	logger *slog.Logger
 }
 
 func (c *workspaceCloner) clone(ctx context.Context, issueID string, target repo, branch string) (run, error) {
-	url := c.cloneBase + target.owner + "/" + target.name + ".git"
+	url := c.cfg.cloneBase + target.owner + "/" + target.name + ".git"
 	ws, err := workspace.New(ctx, c.cfg.workDir, url, branch, c.cfg.path, c.cfg.githubToken)
 	if err != nil {
 		return nil, err

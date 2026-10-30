@@ -4,15 +4,14 @@ package systemtest
 
 import (
 	"bytes"
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
-	"log/slog"
-	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,12 +19,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
-
-	"heinzel/internal/platform/app"
-	"heinzel/internal/slices/investigatesentryissue"
-	"heinzel/internal/slices/recordsentryissuealert"
 )
 
 // The bug: Version.Core panics on a zero-value Version. upstreamFix fixed
@@ -50,6 +46,7 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		t.Fatalf("claude is not on PATH: %v", err)
 	}
+	bin := buildHeinzel(t)
 
 	upstream := t.TempDir()
 	git(t, "", "clone", "--quiet", upstreamURL, upstream)
@@ -59,9 +56,8 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 	serveParentOfFix(t, upstream, remote)
 	requireBugReproduces(t, remote, fixedTest)
 
-	github := &fakeGitHub{}
-	sink := newLogSink()
-	client := startHeinzel(t, sink, github, map[string]string{
+	github := newFakeGitHub(t)
+	heinzel := startHeinzel(t, bin, map[string]string{
 		"SENTRY_CLIENT_SECRET":   sentrySecret,
 		"SENTRY_GITHUB_REPOS":    strconv.Itoa(sentryProj) + "=hashicorp/go-version",
 		"GITHUB_TOKEN":           "system-test-dummy-token",
@@ -72,10 +68,19 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 		"INVESTIGATION_WORK_DIR": privateDir(t),
 		"HOME":                   home,
 		"PATH":                   os.Getenv("PATH"),
-	}, remotes+"/")
+		"GITHUB_API_URL":         github.url,
+		"GITHUB_CLONE_URL":       remotes + "/",
+	})
 
-	postAlert(t, client)
-	finished := sink.waitFor(t, investigationDeadline(t), func(r map[string]any) bool {
+	started := heinzel.waitFor(t, time.Now().Add(time.Minute), "app started", func(r map[string]any) bool {
+		return r["msg"] == "app started"
+	})
+	addr, _ := started["addr"].(string)
+	if addr == "" {
+		t.Fatalf("app started record has no addr: %v", started)
+	}
+	postAlert(t, addr)
+	finished := heinzel.waitFor(t, investigationDeadline(t), "investigation finished", func(r map[string]any) bool {
 		return r["msg"] == "sentry issue investigation finished" && r["issueId"] == issueID
 	})
 	if finished["outcome"] != "pr_opened" {
@@ -204,46 +209,104 @@ func requireBugReproduces(t *testing.T, remote, fixedTest string) {
 	}
 }
 
-// startHeinzel runs heinzel's Sentry slices on an in-memory listener, with
-// GitHub faked and repos cloned from cloneBase. It returns a client
-// connected to it.
-func startHeinzel(t *testing.T, sink *logSink, github *fakeGitHub, env map[string]string, cloneBase string) *http.Client {
+// buildHeinzel builds heinzel's command into a temp dir and returns the
+// binary.
+func buildHeinzel(t *testing.T) string {
 	t.Helper()
-	getenv := func(key string) string { return env[key] }
-	logger := slog.New(slog.NewJSONHandler(io.MultiWriter(sink, os.Stderr), nil))
-	record, err := recordsentryissuealert.New(getenv, logger)
-	if err != nil {
-		t.Fatalf("record slice: %v", err)
+	bin := filepath.Join(t.TempDir(), "heinzel")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/heinzel")
+	cmd.Dir = filepath.Join("..", "..") // the module root
+	cmd.Env = os.Environ()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build heinzel: %v\n%s", err, out)
 	}
-	investigate, err := investigatesentryissue.New(investigatesentryissue.Params{
-		Getenv:         getenv,
-		Logger:         logger,
-		GitHubAPIURL:   "https://api.github.test",
-		GitHubCloneURL: cloneBase,
-		HTTPClient:     &http.Client{Transport: github},
-		Now:            time.Now,
-	})
-	if err != nil {
-		t.Fatalf("investigate slice: %v", err)
-	}
+	return bin
+}
 
-	ln := newPipeListener()
-	ctx, cancel := context.WithCancel(context.Background())
-	runErr := make(chan error, 1)
-	cfg := app.Config{DataDir: t.TempDir(), ShutdownTimeout: 10 * time.Second}
-	slices := app.Slices{StateChanges: []app.StateChange{record}, Automations: []app.Automation{investigate}}
-	go func() { runErr <- app.Run(ctx, cfg, ln, slices, logger) }()
+// heinzelProcess is heinzel running as a child process.
+type heinzelProcess struct {
+	logs   *logSink
+	exited chan struct{} // closed once Wait returns
+	err    error         // Wait's error, set before exited is closed
+}
+
+// startHeinzel runs bin on a free loopback port with a data dir of its
+// own and exactly env as its environment. Its stderr goes to the test's
+// stderr and into its logs. On cleanup it is stopped with SIGTERM and must
+// exit with status 0; register it after everything heinzel uses, so it
+// stops first.
+func startHeinzel(t *testing.T, bin string, env map[string]string) *heinzelProcess {
+	t.Helper()
+	h := &heinzelProcess{logs: newLogSink(), exited: make(chan struct{})}
+	cmd := exec.Command(bin, "-addr", "127.0.0.1:0", "-data-dir", t.TempDir())
+	cmd.Env = []string{}
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	cmd.Stderr = h.logs
+	cmd.WaitDelay = 10 * time.Second
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start heinzel: %v", err)
+	}
+	go func() {
+		h.err = cmd.Wait()
+		close(h.exited)
+	}()
 	t.Cleanup(func() {
-		cancel()
-		if err := <-runErr; err != nil {
-			t.Errorf("heinzel stopped with %v", err)
+		select {
+		case <-h.exited:
+		default:
+			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				t.Errorf("SIGTERM heinzel: %v", err)
+			}
+			select {
+			case <-h.exited:
+			case <-time.After(30 * time.Second): // beyond its 10s shutdown timeout
+				_ = cmd.Process.Kill()
+				<-h.exited
+				t.Error("heinzel did not stop within 30s of SIGTERM")
+				return
+			}
+		}
+		if h.err != nil {
+			t.Errorf("heinzel exited with %v, want status 0", h.err)
 		}
 	})
-	return &http.Client{Timeout: time.Minute, Transport: &http.Transport{DialContext: ln.Dial, DisableKeepAlives: true}}
+	return h
+}
+
+// waitFor returns heinzel's first log record matching match, failing at
+// deadline or as soon as heinzel exits without one.
+func (h *heinzelProcess) waitFor(t *testing.T, deadline time.Time, what string, match func(map[string]any) bool) map[string]any {
+	t.Helper()
+	timeout := time.NewTimer(time.Until(deadline))
+	defer timeout.Stop()
+	for seen, exited := 0, false; ; {
+		records, changed := h.logs.snapshot()
+		for ; seen < len(records); seen++ {
+			if match(records[seen]) {
+				return records[seen]
+			}
+		}
+		if exited {
+			status := "status 0"
+			if h.err != nil {
+				status = h.err.Error()
+			}
+			t.Fatalf("heinzel exited (%s) before logging %s", status, what)
+		}
+		select {
+		case <-changed:
+		case <-h.exited:
+			exited = true // look once more: Wait has copied all of stderr
+		case <-timeout.C:
+			t.Fatalf("no %s log record by %v", what, deadline)
+		}
+	}
 }
 
 // postAlert sends Sentry's alert for the panic, as the Go SDK reports it.
-func postAlert(t *testing.T, client *http.Client) {
+func postAlert(t *testing.T, addr string) {
 	t.Helper()
 	const culprit = "github.com/hashicorp/go-version.(*Version).Core"
 	frame := map[string]any{"filename": "version.go", "function": culprit, "lineno": 376}
@@ -270,7 +333,7 @@ func postAlert(t *testing.T, client *http.Client) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, err := http.NewRequest(http.MethodPost, "http://heinzel.test/sentry/callback", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/sentry/callback", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +342,7 @@ func postAlert(t *testing.T, client *http.Client) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Sentry-Hook-Resource", "event_alert")
 	req.Header.Set("Sentry-Hook-Signature", hex.EncodeToString(mac.Sum(nil)))
-	resp, err := client.Do(req)
+	resp, err := (&http.Client{Timeout: time.Minute}).Do(req)
 	if err != nil {
 		t.Fatalf("POST /sentry/callback: %v", err)
 	}
@@ -338,22 +401,28 @@ func goTest(dir string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// fakeGitHub answers every request as a created draft PR and records it.
+// fakeGitHub is a local server that answers every request as a created
+// draft PR and records it.
 type fakeGitHub struct {
+	url      string
 	mu       sync.Mutex
 	requests []string
 }
 
-func (g *fakeGitHub) RoundTrip(r *http.Request) (*http.Response, error) {
-	g.mu.Lock()
-	g.requests = append(g.requests, r.Method+" "+r.URL.Path)
-	g.mu.Unlock()
-	return &http.Response{
-		StatusCode: http.StatusCreated,
-		Header:     http.Header{"Content-Type": {"application/json"}},
-		Body:       io.NopCloser(strings.NewReader(`{"number":1,"html_url":"` + prURL + `"}`)),
-		Request:    r,
-	}, nil
+func newFakeGitHub(t *testing.T) *fakeGitHub {
+	t.Helper()
+	g := &fakeGitHub{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g.mu.Lock()
+		g.requests = append(g.requests, r.Method+" "+r.URL.Path)
+		g.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"number":1,"html_url":"`+prURL+`"}`)
+	}))
+	t.Cleanup(srv.Close)
+	g.url = srv.URL
+	return g
 }
 
 func (g *fakeGitHub) recorded() []string {
@@ -362,9 +431,13 @@ func (g *fakeGitHub) recorded() []string {
 	return slices.Clone(g.requests)
 }
 
-// logSink collects JSON log records, one per Write, and signals each one.
+// logSink is heinzel's stderr: it copies every byte to the test's stderr
+// and collects the JSON log records, one per line, signalling each one.
+// Other lines, such as a panic trace, are only copied. It never fails a
+// write, so heinzel never blocks on its stderr.
 type logSink struct {
 	mu      sync.Mutex
+	partial []byte // the unfinished last line
 	records []map[string]any
 	changed chan struct{} // closed and replaced on each record
 }
@@ -372,83 +445,29 @@ type logSink struct {
 func newLogSink() *logSink { return &logSink{changed: make(chan struct{})} }
 
 func (s *logSink) Write(p []byte) (int, error) {
-	var record map[string]any
-	if err := json.Unmarshal(p, &record); err != nil {
-		return 0, err
-	}
+	_, _ = os.Stderr.Write(p)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.records = append(s.records, record)
-	close(s.changed)
-	s.changed = make(chan struct{})
+	s.partial = append(s.partial, p...)
+	for {
+		line, rest, ok := bytes.Cut(s.partial, []byte("\n"))
+		if !ok {
+			break
+		}
+		var record map[string]any
+		if json.Unmarshal(line, &record) == nil {
+			s.records = append(s.records, record)
+			close(s.changed)
+			s.changed = make(chan struct{})
+		}
+		s.partial = rest
+	}
 	return len(p), nil
 }
 
-// waitFor returns the first record matching match, failing at deadline.
-func (s *logSink) waitFor(t *testing.T, deadline time.Time, match func(map[string]any) bool) map[string]any {
-	t.Helper()
-	timeout := time.NewTimer(time.Until(deadline))
-	defer timeout.Stop()
-	for seen := 0; ; {
-		s.mu.Lock()
-		records, changed := s.records, s.changed
-		s.mu.Unlock()
-		for ; seen < len(records); seen++ {
-			if match(records[seen]) {
-				return records[seen]
-			}
-		}
-		select {
-		case <-changed:
-		case <-timeout.C:
-			t.Fatalf("no matching log record by %v", deadline)
-		}
-	}
+// snapshot returns the records so far and a channel closed on the next.
+func (s *logSink) snapshot() ([]map[string]any, <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.records, s.changed
 }
-
-// pipeListener is an in-memory net.Listener: Dial hands it the server end
-// of a net.Pipe, so heinzel is served without binding a socket.
-type pipeListener struct {
-	conns     chan net.Conn
-	done      chan struct{}
-	closeOnce sync.Once
-}
-
-func newPipeListener() *pipeListener {
-	return &pipeListener{conns: make(chan net.Conn), done: make(chan struct{})}
-}
-
-func (l *pipeListener) Accept() (net.Conn, error) {
-	select {
-	case conn := <-l.conns:
-		return conn, nil
-	case <-l.done:
-		return nil, net.ErrClosed
-	}
-}
-
-func (l *pipeListener) Close() error {
-	l.closeOnce.Do(func() { close(l.done) })
-	return nil
-}
-
-func (l *pipeListener) Addr() net.Addr { return pipeAddr{} }
-
-func (l *pipeListener) Dial(ctx context.Context, _, _ string) (net.Conn, error) {
-	client, server := net.Pipe()
-	select {
-	case l.conns <- server:
-		return client, nil
-	case <-l.done:
-		_, _ = client.Close(), server.Close()
-		return nil, net.ErrClosed
-	case <-ctx.Done():
-		_, _ = client.Close(), server.Close()
-		return nil, ctx.Err()
-	}
-}
-
-type pipeAddr struct{}
-
-func (pipeAddr) Network() string { return "pipe" }
-func (pipeAddr) String() string  { return "pipe" }
