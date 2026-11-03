@@ -632,6 +632,9 @@ probe](#sandbox-probe) result holds for, and that `go env GOTOOLCHAIN` prints
 - **Writable root.** Don't set `readonlyRootFilesystem`: `/tmp`, `HOME`,
   `/var/lib/heinzel/data` and `/var/lib/heinzel/work` must be writable.
 
+[infra/README.md](../infra/README.md) deploys the image to ECS Fargate
+behind an HTTPS ALB with OpenTofu, including a Fargate run of the probe.
+
 Make targets (all but `image-context` need Docker):
 
 - `make image-context` stages the build context in `bin/image`: the

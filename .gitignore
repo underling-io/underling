@@ -1,2 +1,12 @@
 bin/
 .idea/
+
+# OpenTofu (infra/): working dir, state, inputs and local overrides. The lock
+# file and terraform.tfvars.example are committed.
+infra/.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+*.tfvars
+*.tfbackend
+*_override.tf

@@ -16,7 +16,7 @@ PLUGIN_CACHE ?= $(HOME)/.claude/plugins/cache
 # Written by image-context; read by image-build.
 -include bin/image/plugin-versions.mk
 
-.PHONY: build-linux-arm64 check system-test image-context image image-build image-push image-smoke clean
+.PHONY: build-linux-arm64 check system-test image-context image image-build image-push image-smoke infra-check clean
 
 build-linux-arm64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o $(BINARY) ./cmd/heinzel
@@ -94,6 +94,15 @@ image-push:
 # SMOKE_REQUIRE_PROBE=1.
 image-smoke: image
 	deploy/image/smoke.sh $(IMAGE):$(IMAGE_TAG)
+
+# Needs OpenTofu and network to registry.opentofu.org (provider download),
+# but no AWS credentials: checks the infra/ code's formatting, validates it,
+# and runs its tests against a mocked AWS provider. Not part of check.
+infra-check:
+	tofu -chdir=infra init -backend=false -input=false -lockfile=readonly
+	tofu -chdir=infra fmt -check -recursive
+	tofu -chdir=infra validate
+	tofu -chdir=infra test
 
 clean:
 	rm -rf bin
