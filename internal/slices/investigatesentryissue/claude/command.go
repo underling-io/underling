@@ -10,8 +10,12 @@ import (
 )
 
 // openAIHost is the only host sandboxed commands may reach: the Codex CLI
-// calls the OpenAI API.
+// calls the OpenAI API. In Bedrock mode it calls bedrockHost instead.
 const openAIHost = "api.openai.com"
+
+// bedrockHost is the Bedrock host Codex's amazon-bedrock provider calls in
+// region.
+func bedrockHost(region string) string { return "bedrock-mantle." + region + ".api.aws" }
 
 // Config is what a run needs from heinzel's settings.
 type Config struct {
@@ -28,6 +32,25 @@ type Config struct {
 	// Readable are paths under denied ones that sandboxed commands still
 	// need: the plugin dirs and the claude binary's dir.
 	Readable []string
+	// Bedrock is set in Bedrock mode: the child logs in to Amazon Bedrock
+	// with AWS credentials, and Anthropic and OpenAIKey are unused.
+	Bedrock *Bedrock
+}
+
+// Bedrock is how Claude and Codex reach Amazon Bedrock.
+type Bedrock struct {
+	Region         string // Claude's
+	Model          string
+	SmallFastModel string
+	CodexRegion    string
+	Credentials    AWSCredentials // this run's
+}
+
+// AWSCredentials are AWS credentials as env vars carry them.
+type AWSCredentials struct {
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string // "" for long-term credentials
 }
 
 // Credential is how the child logs in to Anthropic: an API key, or a
@@ -71,7 +94,8 @@ type Cmd struct {
 
 // Command builds the headless claude invocation for a run in dirs. The
 // child gets only PATH, its own HOME and config dir, and the two model
-// credentials from heinzel's environment.
+// credentials from heinzel's environment, or in Bedrock mode its Bedrock
+// settings, with the model aliases pinned to them, and AWS credentials.
 //
 // --bare never reads an OAuth token, so a run on one goes without it and
 // skips MCP servers with --strict-mcp-config instead; the fresh config dir
@@ -98,19 +122,48 @@ func Command(cfg Config, dirs Dirs, prompt string) (Cmd, error) {
 		args = append(args, "--plugin-dir", dir)
 	}
 	return Cmd{
-		bin:  cfg.Bin,
-		args: args,
-		dir:  dirs.Clone,
-		env: []string{
-			"PATH=" + cfg.Path,
-			"HOME=" + dirs.Home,
-			"CLAUDE_CONFIG_DIR=" + dirs.ClaudeConfig,
-			cfg.Anthropic.envVar() + "=" + cfg.Anthropic.Value,
-			"OPENAI_API_KEY=" + cfg.OpenAIKey,
-		},
+		bin:        cfg.Bin,
+		args:       args,
+		dir:        dirs.Clone,
+		env:        childEnv(cfg, dirs),
 		stdin:      prompt,
 		pluginDirs: cfg.PluginDirs,
 	}, nil
+}
+
+// childEnv is the child's whole environment.
+func childEnv(cfg Config, dirs Dirs) []string {
+	env := []string{
+		"PATH=" + cfg.Path,
+		"HOME=" + dirs.Home,
+		"CLAUDE_CONFIG_DIR=" + dirs.ClaudeConfig,
+	}
+	b := cfg.Bedrock
+	if b == nil {
+		return append(env,
+			cfg.Anthropic.envVar()+"="+cfg.Anthropic.Value,
+			"OPENAI_API_KEY="+cfg.OpenAIKey,
+		)
+	}
+	env = append(env,
+		"CLAUDE_CODE_USE_BEDROCK=1",
+		"AWS_REGION="+b.Region,
+		"ANTHROPIC_MODEL="+b.Model,
+		"ANTHROPIC_SMALL_FAST_MODEL="+b.SmallFastModel,
+		// Pin the aliases too: a subagent or skill with `model: sonnet`
+		// (or opus, haiku) would otherwise land on Claude Code's default
+		// Bedrock model, which the IAM role may not grant.
+		"ANTHROPIC_DEFAULT_OPUS_MODEL="+b.Model,
+		"ANTHROPIC_DEFAULT_SONNET_MODEL="+b.Model,
+		"ANTHROPIC_DEFAULT_FABLE_MODEL="+b.Model,
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL="+b.SmallFastModel,
+		"AWS_ACCESS_KEY_ID="+b.Credentials.AccessKeyID,
+		"AWS_SECRET_ACCESS_KEY="+b.Credentials.SecretAccessKey,
+	)
+	if b.Credentials.SessionToken != "" {
+		env = append(env, "AWS_SESSION_TOKEN="+b.Credentials.SessionToken)
+	}
+	return env
 }
 
 // settings is the part of Claude Code's settings.json heinzel generates.
@@ -140,7 +193,8 @@ type settings struct {
 //
 // Shell commands run in Claude Code's sandbox, which refuses to start
 // unsandboxed and never retries outside it. They may write only to the
-// clone and the child's HOME, and reach only the OpenAI API. Reads of
+// clone and the child's HOME, and reach only the API Codex calls: OpenAI's,
+// or in Bedrock mode Bedrock's in the Codex region. Reads of
 // heinzel's HOME, the deny-read paths and the whole work dir are denied;
 // a narrower allowRead re-opens the clone, the child's HOME and config dir,
 // the plugin dirs and the claude binary's dir.
@@ -166,6 +220,9 @@ func sandboxSettings(cfg Config, dirs Dirs) settings {
 	s.Sandbox.Filesystem.DenyRead = append(denied, dirs.WorkDir)
 	s.Sandbox.Filesystem.AllowRead = slices.Concat([]string{dirs.Clone, dirs.Home, dirs.ClaudeConfig}, cfg.Readable)
 	s.Sandbox.Network.AllowedDomains = []string{openAIHost}
+	if cfg.Bedrock != nil {
+		s.Sandbox.Network.AllowedDomains = []string{bedrockHost(cfg.Bedrock.CodexRegion)}
+	}
 	return s
 }
 

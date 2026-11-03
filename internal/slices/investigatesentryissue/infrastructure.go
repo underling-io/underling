@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+
 	"heinzel/internal/slices/investigatesentryissue/claude"
 	"heinzel/internal/slices/investigatesentryissue/github"
 	"heinzel/internal/slices/investigatesentryissue/workspace"
@@ -13,6 +15,7 @@ import (
 // Claude runs in a sandboxed child process.
 type workspaceCloner struct {
 	cfg    config
+	aws    aws.CredentialsProvider // Bedrock mode's credentials cache, or nil
 	logger *slog.Logger
 }
 
@@ -22,19 +25,31 @@ func (c *workspaceCloner) clone(ctx context.Context, issueID string, target repo
 	if err != nil {
 		return nil, err
 	}
-	return &workspaceRun{ws: ws, cfg: c.cfg, issueID: issueID, logger: c.logger}, nil
+	return &workspaceRun{ws: ws, cfg: c.cfg, aws: c.aws, issueID: issueID, logger: c.logger}, nil
 }
 
 // workspaceRun is an investigation in a workspace.
 type workspaceRun struct {
 	ws      *workspace.Workspace
 	cfg     config
+	aws     aws.CredentialsProvider
 	issueID string
 	logger  *slog.Logger
 }
 
 func (r *workspaceRun) claude(ctx context.Context, prompt string) (string, error) {
-	cmd, err := claude.Command(claudeConfig(r.cfg), claudeDirs(r.ws), prompt)
+	cfg := claudeConfig(r.cfg)
+	if b := r.cfg.bedrock; b != nil {
+		creds, err := runCredentials(ctx, r.aws, r.cfg.timeout)
+		if err != nil {
+			return "", err
+		}
+		if err := writeCodexConfig(r.ws.Home, b); err != nil {
+			return "", err
+		}
+		cfg.Bedrock = &claude.Bedrock{Region: b.region, Model: b.model, SmallFastModel: b.smallFastModel, CodexRegion: b.codexRegion, Credentials: creds}
+	}
+	cmd, err := claude.Command(cfg, claudeDirs(r.ws), prompt)
 	if err != nil {
 		return "", err
 	}

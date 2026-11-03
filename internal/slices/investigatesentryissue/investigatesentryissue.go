@@ -25,6 +25,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+
 	"heinzel/internal/platform/app"
 	"heinzel/internal/platform/eventhandler"
 	"heinzel/internal/platform/eventstore"
@@ -51,6 +53,9 @@ type Params struct {
 	// Now is read once, when the handler is built: alerts stored more than
 	// the max age before then are stale.
 	Now func() time.Time
+	// AWS, in Bedrock mode, is where runs get their AWS credentials; New
+	// caches them. nil means the AWS SDK's default chain.
+	AWS aws.CredentialsProvider
 }
 
 // New returns the slice, or an error if its config is invalid.
@@ -74,6 +79,12 @@ func New(p Params) (app.Automation, error) {
 	if err := resolveReadPaths(&cfg); err != nil {
 		return app.Automation{}, err
 	}
+	var credentials aws.CredentialsProvider
+	if cfg.bedrock != nil {
+		if credentials, err = newCredentialsCache(context.Background(), p.AWS, cfg.bedrock.region, cfg.timeout); err != nil {
+			return app.Automation{}, err
+		}
+	}
 	for _, d := range deniedPathDirs(cfg) {
 		p.Logger.Warn("PATH entry lies under a path the child may not read; tools there won't run inside the sandbox",
 			"handler", handlerName, "dir", d.dir, "denied", d.denied)
@@ -86,7 +97,7 @@ func New(p Params) (app.Automation, error) {
 				logger:      p.Logger,
 				staleBefore: p.Now().Add(-cfg.maxAge),
 				repos:       cfg.repos,
-				cloner:      &workspaceCloner{cfg: cfg, logger: p.Logger},
+				cloner:      &workspaceCloner{cfg: cfg, aws: credentials, logger: p.Logger},
 				prs:         githubPROpener{&github.Client{APIURL: cfg.apiURL, Token: cfg.githubToken, HTTP: p.HTTPClient}},
 			}
 		},

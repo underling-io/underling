@@ -156,3 +156,99 @@ func TestLoadConfigWantsExactlyOneAnthropicCredential(t *testing.T) {
 		})
 	}
 }
+
+// bedrockEnv is validEnv in Bedrock mode: no Anthropic or OpenAI keys.
+func bedrockEnv(overrides map[string]string) func(string) string {
+	env := validEnv()
+	delete(env, "ANTHROPIC_API_KEY")
+	delete(env, "OPENAI_API_KEY")
+	maps.Copy(env, map[string]string{
+		"CLAUDE_CODE_USE_BEDROCK": "1",
+		"AWS_REGION":              "eu-central-1",
+		"ANTHROPIC_MODEL":         "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"CODEX_BEDROCK_MODEL":     "openai.gpt-oss-120b",
+	})
+	maps.Copy(env, overrides)
+	return func(key string) string { return env[key] }
+}
+
+func TestLoadConfigInBedrockModeDefaultsTheSmallModelAndCodexRegion(t *testing.T) {
+	got, err := loadConfig(bedrockEnv(nil))
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	want := &bedrockConfig{
+		region:         "eu-central-1",
+		model:          "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		smallFastModel: "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		codexModel:     "openai.gpt-oss-120b",
+		codexRegion:    "eu-central-1",
+	}
+	if !reflect.DeepEqual(got.bedrock, want) {
+		t.Fatalf("bedrock = %+v, want %+v", got.bedrock, want)
+	}
+	if got.anthropic != (claude.Credential{}) || got.openAIKey != "" {
+		t.Errorf("got anthropic %+v and openAIKey %q, want neither", got.anthropic, got.openAIKey)
+	}
+}
+
+func TestLoadConfigInBedrockModeReadsTheOptionalVariables(t *testing.T) {
+	got, err := loadConfig(bedrockEnv(map[string]string{
+		"ANTHROPIC_SMALL_FAST_MODEL": "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+		"CODEX_BEDROCK_REGION":       "us-west-2",
+	}))
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if got.bedrock.smallFastModel != "eu.anthropic.claude-haiku-4-5-20251001-v1:0" || got.bedrock.codexRegion != "us-west-2" {
+		t.Fatalf("bedrock = %+v", got.bedrock)
+	}
+}
+
+func TestLoadConfigOutsideBedrockModeIgnoresTheBedrockVariables(t *testing.T) {
+	for _, value := range []string{"", "unset"} {
+		overrides := map[string]string{"AWS_REGION": "not a region", "ANTHROPIC_MODEL": "bad model!", "CODEX_BEDROCK_REGION": "x"}
+		if value != "unset" {
+			overrides["CLAUDE_CODE_USE_BEDROCK"] = value
+		}
+		got, err := loadConfig(with(overrides))
+		if err != nil || got.bedrock != nil {
+			t.Fatalf("CLAUDE_CODE_USE_BEDROCK %s: got bedrock %+v and error %v, want neither", value, got.bedrock, err)
+		}
+	}
+}
+
+func TestLoadConfigInBedrockModeRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		variable string
+		value    string
+	}{
+		{"CLAUDE_CODE_USE_BEDROCK", "true"},
+		{"CLAUDE_CODE_USE_BEDROCK", "0"},
+		{"AWS_REGION", ""},
+		{"AWS_REGION", "EU-CENTRAL-1"},
+		{"AWS_REGION", "eu-central"},
+		{"AWS_REGION", "eu_central_1"},
+		{"AWS_REGION", "eu-central-1.evil.com/"},
+		{"AWS_REGION", "-eu-1"},
+		{"ANTHROPIC_MODEL", ""},
+		{"ANTHROPIC_MODEL", "   "},
+		{"ANTHROPIC_MODEL", "model with space"},
+		{"ANTHROPIC_MODEL", "model\"quote"},
+		{"CODEX_BEDROCK_MODEL", ""},
+		{"CODEX_BEDROCK_MODEL", "a\nb"},
+		{"ANTHROPIC_SMALL_FAST_MODEL", "bad model"},
+		{"CODEX_BEDROCK_REGION", "us-west"},
+		{"ANTHROPIC_API_KEY", "anthropic-key"},
+		{"CLAUDE_CODE_OAUTH_TOKEN", "oauth-token"},
+		{"OPENAI_API_KEY", "openai-key"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.variable+"="+tt.value, func(t *testing.T) {
+			_, err := loadConfig(bedrockEnv(map[string]string{tt.variable: tt.value}))
+			if err == nil || !strings.Contains(err.Error(), tt.variable) {
+				t.Fatalf("got error %v, want one naming %s", err, tt.variable)
+			}
+		})
+	}
+}

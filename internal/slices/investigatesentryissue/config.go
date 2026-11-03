@@ -27,6 +27,13 @@ const (
 	denyReadEnvVar   = "INVESTIGATION_DENY_READ"
 	apiURLEnvVar     = "GITHUB_API_URL"
 	cloneURLEnvVar   = "GITHUB_CLONE_URL"
+
+	useBedrockEnvVar     = "CLAUDE_CODE_USE_BEDROCK"
+	awsRegionEnvVar      = "AWS_REGION"
+	modelEnvVar          = "ANTHROPIC_MODEL"
+	smallFastModelEnvVar = "ANTHROPIC_SMALL_FAST_MODEL"
+	codexModelEnvVar     = "CODEX_BEDROCK_MODEL"
+	codexRegionEnvVar    = "CODEX_BEDROCK_REGION"
 )
 
 // repo is a GitHub repository.
@@ -56,6 +63,18 @@ type config struct {
 	readable  []string
 	apiURL    string // the GitHub REST API base
 	cloneBase string // repos are cloned from <cloneBase><owner>/<repo>.git
+	// bedrock is set in Bedrock mode, where Claude and Codex use Amazon
+	// Bedrock with heinzel's AWS credentials instead of the two keys.
+	bedrock *bedrockConfig
+}
+
+// bedrockConfig is Bedrock mode's settings.
+type bedrockConfig struct {
+	region         string // Claude's AWS region
+	model          string // Claude's model or inference-profile id
+	smallFastModel string
+	codexModel     string
+	codexRegion    string
 }
 
 // loadConfig reads the settings through getenv. It reports every invalid
@@ -84,11 +103,22 @@ func loadConfig(getenv func(string) string) (config, error) {
 	var err error
 	cfg.repos, err = parseRepos(getenv(reposEnvVar))
 	check(reposEnvVar, err)
-	cfg.anthropic, err = parseCredential(getenv(anthropicKeyVar), getenv(oauthTokenVar))
-	if err != nil {
-		errs = append(errs, err)
+	required := []struct{ name, value string }{{githubTokenVar, cfg.githubToken}}
+	switch getenv(useBedrockEnvVar) {
+	case "":
+		cfg.anthropic, err = parseCredential(getenv(anthropicKeyVar), getenv(oauthTokenVar))
+		if err != nil {
+			errs = append(errs, err)
+		}
+		required = append(required, struct{ name, value string }{openAIKeyVar, cfg.openAIKey})
+	case "1":
+		var bedrockErrs []error
+		cfg.bedrock, bedrockErrs = parseBedrock(getenv)
+		errs = append(errs, bedrockErrs...)
+	default:
+		check(useBedrockEnvVar, errors.New(`must be "1" or unset`))
 	}
-	for _, v := range []struct{ name, value string }{{githubTokenVar, cfg.githubToken}, {openAIKeyVar, cfg.openAIKey}} {
+	for _, v := range required {
 		if v.value == "" {
 			check(v.name, errors.New("must be set"))
 		}
@@ -123,6 +153,51 @@ func parseCredential(apiKey, oauthToken string) (claude.Credential, error) {
 		return claude.Credential{OAuth: true, Value: oauthToken}, nil
 	}
 	return claude.Credential{}, fmt.Errorf("%s or %s: must be set", anthropicKeyVar, oauthTokenVar)
+}
+
+var (
+	// awsRegion is an AWS region's shape, such as eu-central-1; it ends up
+	// in a hostname.
+	awsRegion = regexp.MustCompile(`^[a-z]+(-[a-z]+)+-[0-9]+$`)
+	// modelID is a Bedrock model or inference-profile id; it ends up in
+	// TOML and a request path.
+	modelID = regexp.MustCompile(`^[A-Za-z0-9._:/-]+$`)
+)
+
+// parseBedrock reads Bedrock mode's settings. Neither Anthropic nor OpenAI
+// keys may be set, so the child never logs in any other way.
+func parseBedrock(getenv func(string) string) (*bedrockConfig, []error) {
+	var errs []error
+	fail := func(variable, problem string) {
+		errs = append(errs, fmt.Errorf("%s: %s", variable, problem))
+	}
+	// read returns variable's value, or def for "". A required variable
+	// has no default.
+	read := func(variable string, required bool, def string, valid *regexp.Regexp, shape string) string {
+		value := getenv(variable)
+		switch {
+		case value == "" && required:
+			fail(variable, "must be set in Bedrock mode")
+		case value == "":
+			return def
+		case !valid.MatchString(value):
+			fail(variable, fmt.Sprintf("%q is not %s", value, shape))
+		}
+		return value
+	}
+	const regionShape, modelShape = "an AWS region such as eu-central-1", "a Bedrock model id of [A-Za-z0-9._:/-]"
+	b := &bedrockConfig{}
+	b.region = read(awsRegionEnvVar, true, "", awsRegion, regionShape)
+	b.model = read(modelEnvVar, true, "", modelID, modelShape)
+	b.smallFastModel = read(smallFastModelEnvVar, false, b.model, modelID, modelShape)
+	b.codexModel = read(codexModelEnvVar, true, "", modelID, modelShape)
+	b.codexRegion = read(codexRegionEnvVar, false, b.region, awsRegion, regionShape)
+	for _, key := range []string{anthropicKeyVar, oauthTokenVar, openAIKeyVar} {
+		if getenv(key) != "" {
+			fail(key, "must not be set in Bedrock mode")
+		}
+	}
+	return b, errs
 }
 
 var repoNamePart = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)

@@ -48,6 +48,8 @@ type fakeCall struct {
 	// TokenFiles lists the files in the run dir that contain the GitHub
 	// token in any of its tokenForms.
 	TokenFiles []string `json:"tokenFiles"`
+	// CodexConfig is $HOME/.codex/config.toml, or "" if there's none.
+	CodexConfig string `json:"codexConfig"`
 }
 
 func fakeClaude() int {
@@ -68,7 +70,8 @@ func fakeClaude() int {
 	if err != nil {
 		return fail("read stdin: %v", err)
 	}
-	call := fakeCall{Args: os.Args[1:], Env: os.Environ(), Dir: dir, Prompt: string(prompt), TokenFiles: filesContaining(runDir, tokenForms(githubToken))}
+	codexConfig, _ := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".codex", "config.toml"))
+	call := fakeCall{Args: os.Args[1:], Env: os.Environ(), Dir: dir, Prompt: string(prompt), TokenFiles: filesContaining(runDir, tokenForms(githubToken)), CodexConfig: string(codexConfig)}
 	if err := appendCall(filepath.Join(workDir, fakeCallsFile), call); err != nil {
 		return fail("record call: %v", err)
 	}

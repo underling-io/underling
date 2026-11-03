@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+
 	"heinzel/internal/events"
 	"heinzel/internal/platform/app"
 	"heinzel/internal/platform/eventhandler"
@@ -97,10 +99,16 @@ type harness struct {
 	storeDir   string
 }
 
-type option func(env map[string]string)
+// setup is what options change before New runs.
+type setup struct {
+	env map[string]string
+	aws aws.CredentialsProvider
+}
+
+type option func(s *setup)
 
 func withEnv(key, value string) option {
-	return func(env map[string]string) { env[key] = value }
+	return func(s *setup) { s.env[key] = value }
 }
 
 func newHarness(t *testing.T, mode string, opts ...option) *harness {
@@ -131,8 +139,9 @@ func newHarness(t *testing.T, mode string, opts ...option) *harness {
 		"GITHUB_API_URL":         apiBase,
 		"GITHUB_CLONE_URL":       h.remotes + "/",
 	}
+	s := setup{env: env}
 	for _, opt := range opts {
-		opt(env)
+		opt(&s)
 	}
 	h.github = &fakeGitHub{status: http.StatusCreated, body: `{"number":7,"html_url":"` + prURL + `"}`}
 
@@ -141,6 +150,7 @@ func newHarness(t *testing.T, mode string, opts ...option) *harness {
 		Logger:     slog.New(slog.NewJSONHandler(lockedWriter{h.logMu, h.logs}, nil)),
 		HTTPClient: &http.Client{Transport: h.github},
 		Now:        func() time.Time { return h.clock },
+		AWS:        s.aws,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -215,13 +225,18 @@ func (h *harness) remote() string { return filepath.Join(h.remotes, "acme", "web
 
 // alert returns a stored SentryIssueAlertReceived for project at ts.
 func alert(position uint64, project int64, ts time.Time) eventstore.Event {
+	return issueAlert(position, issueID, project, ts)
+}
+
+// issueAlert is alert for issue id.
+func issueAlert(position uint64, id string, project int64, ts time.Time) eventstore.Event {
 	payload, _ := json.Marshal(events.SentryIssueAlertReceived{
 		EventID:        "aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4",
-		IssueID:        issueID,
+		IssueID:        id,
 		Project:        project,
 		Title:          "ReferenceError: blooopy is not defined",
 		Level:          "error",
-		WebURL:         "https://sentry.io/organizations/test-org/issues/" + issueID + "/",
+		WebURL:         "https://sentry.io/organizations/test-org/issues/" + id + "/",
 		TriggeredRule:  "rule-a",
 		Culprit:        "?(runner)",
 		ExceptionType:  "ReferenceError",

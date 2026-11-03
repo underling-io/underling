@@ -154,7 +154,10 @@ alert, in order:
    seconds. A timed-out command's output is read for at most 10 more
    seconds, so a helper it left holding the pipes (say `git-remote-https`)
    can't hold the run up.
-5. **Claude.** heinzel runs `claude` in the work clone (see
+5. **Claude.** In [Bedrock mode](#bedrock-mode), heinzel first gets the
+   run's AWS credentials and writes the child's Codex config; either
+   failing fails the run as stage `claude` before the child starts. heinzel
+   then runs `claude` in the work clone (see
    [Isolation](#isolation)) with the prompt on stdin. The run succeeds when
    the child exits 0, its `system/init` event shows the session started as
    configured (permission mode `acceptEdits`, a plugin loaded from every
@@ -228,9 +231,10 @@ The slice reads these when it is built. Any invalid value fails startup with
 | --- | --- | --- | --- |
 | `SENTRY_GITHUB_REPOS` | yes | `<projectId>=<owner>/<repo>`, comma-separated; ids are integers, each mapped once | |
 | `GITHUB_TOKEN` | yes | token that can push branches and open PRs on the mapped repos; must not have the `workflow` scope (see [CI](#ci)) | |
-| `ANTHROPIC_API_KEY` | one of these two | API key, passed to the `claude` child | |
-| `CLAUDE_CODE_OAUTH_TOKEN` | one of these two | subscription token from `claude setup-token`, passed to the `claude` child instead of an API key; setting both is invalid | |
-| `OPENAI_API_KEY` | yes | passed to the `claude` child, for Codex | |
+| `ANTHROPIC_API_KEY` | one of these two, outside Bedrock mode | API key, passed to the `claude` child | |
+| `CLAUDE_CODE_OAUTH_TOKEN` | one of these two, outside Bedrock mode | subscription token from `claude setup-token`, passed to the `claude` child instead of an API key; setting both is invalid | |
+| `OPENAI_API_KEY` | yes, outside Bedrock mode | passed to the `claude` child, for Codex | |
+| `CLAUDE_CODE_USE_BEDROCK` | no | `1` turns on [Bedrock mode](#bedrock-mode); unset or empty means off, and then the Bedrock variables below are ignored; any other value is invalid | |
 | `CLAUDE_PLUGIN_DIRS` | yes | comma-separated plugin dirs (the Codex and auto-task plugins), each passed as `--plugin-dir` | |
 | `INVESTIGATION_TIMEOUT` | no | positive Go duration | `30m` |
 | `INVESTIGATION_MAX_AGE` | no | positive Go duration | `1h` |
@@ -239,6 +243,71 @@ The slice reads these when it is built. Any invalid value fails startup with
 | `INVESTIGATION_DENY_READ` | no | comma-separated absolute paths the child may not read, such as heinzel's data dir | |
 | `GITHUB_API_URL` | no | absolute `http` or `https` URL of the GitHub REST API, without credentials, query or fragment; `GITHUB_TOKEN` goes to it, so use `http` only for a local test server | `https://api.github.com` |
 | `GITHUB_CLONE_URL` | no | clone base ending in `/`: a URL or a local dir; repos are cloned (and pushed) at `<base><owner>/<repo>.git`; `GITHUB_TOKEN` goes to it, so use `http` or another host only for a local test remote | `https://github.com/` |
+
+#### Bedrock mode
+
+With `CLAUDE_CODE_USE_BEDROCK=1`, Claude Code and the Codex it calls both use
+Amazon Bedrock with heinzel's AWS credentials, so no Anthropic or OpenAI key
+is needed. `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and
+`OPENAI_API_KEY` must then be unset (or empty); setting any of them is
+invalid. Bedrock mode reads:
+
+| Variable | Required | Format | Default |
+| --- | --- | --- | --- |
+| `AWS_REGION` | yes | AWS region (lowercase, hyphenated, ending in a digit), Claude Code's Bedrock region | |
+| `ANTHROPIC_MODEL` | yes | Bedrock model or inference-profile id (`[A-Za-z0-9._:/-]`), e.g. `global.anthropic.claude-sonnet-4-5-20250929-v1:0` | |
+| `ANTHROPIC_SMALL_FAST_MODEL` | no | the model id Claude Code uses for background tasks; deprecated by Claude Code in favour of `ANTHROPIC_DEFAULT_HAIKU_MODEL` but still honoured | `ANTHROPIC_MODEL` |
+| `CODEX_BEDROCK_MODEL` | yes | Codex's Bedrock model id, a plain regional id such as `openai.gpt-oss-120b` (Mantle has no cross-region inference) | |
+| `CODEX_BEDROCK_REGION` | no | AWS region of Codex's Bedrock endpoint | `AWS_REGION` |
+
+**Credentials.** heinzel resolves AWS credentials through the AWS SDK for
+Go's default chain: its own process environment (`AWS_ACCESS_KEY_ID`, …,
+`AWS_PROFILE`), the shared config and credentials files, or the ECS task
+role's endpoint. The SDK reads these itself, not through the slice's
+config. Credentials are cached, and each run gets them before the child
+starts: credentials that would expire within `INVESTIGATION_TIMEOUT` are
+refetched first, so a run never starts on credentials that could lapse
+before it ends. That holds for env, profile/SSO and ECS container
+credentials. With the EC2 instance-metadata provider the SDK adjusts
+expiries itself: it skips the window when under 15 minutes remain,
+extends credentials when a refresh fails, and caps them at an hour. So runs
+may start on shorter-lived credentials, and with an `INVESTIGATION_TIMEOUT`
+of an hour or more every run fails, with the hour cap reported as the
+expiry; on ECS, use a task role. If freshly fetched credentials still
+expire too soon, or none can be had within a minute, the run fails as
+stage `claude` without starting the child; the reason names the expiry and
+the timeout, or the SDK's error. Credentials without an expiry (long-term
+keys) always pass. Unverified: whether the ECS credential endpoint hands
+out new task-role credentials more than `INVESTIGATION_TIMEOUT` before the
+old ones expire. If it doesn't, runs fail as stage `claude` in that window
+of each rotation; a shorter timeout narrows it.
+The child gets them as plain env vars, so it never needs heinzel's `HOME`
+or a credential endpoint.
+
+**Codex config.** Before each run, heinzel writes the child's
+`HOME/.codex/config.toml` (dir 0700, file 0600), which selects Codex's
+built-in `amazon-bedrock` provider (Bedrock's OpenAI-compatible Mantle
+endpoint):
+
+```toml
+model = '<CODEX_BEDROCK_MODEL>'
+model_provider = 'amazon-bedrock'
+
+[model_providers]
+[model_providers.amazon-bedrock]
+[model_providers.amazon-bedrock.aws]
+region = '<CODEX_BEDROCK_REGION>'
+```
+
+The region must be in the file: the child's `AWS_REGION` is Claude's, and
+Codex reads the file's region first (it falls back to `AWS_REGION` only
+without one). Codex signs its requests with the child's AWS env
+credentials.
+
+The child's environment, `allowedDomains` and the AWS permissions this mode
+needs are under [Isolation](#isolation) and [AWS needs](#aws-needs).
+
+#### Paths the child may not read
 
 heinzel's own `HOME` is also denied to the child. Neither the work dir nor a
 plugin dir may lie inside `HOME` or an `INVESTIGATION_DENY_READ` path, and no
@@ -266,8 +335,10 @@ dir first to read or plant run dirs. An existing dir is never chmodded.
 The host (the binary ships as linux-arm64) needs on `PATH`:
 
 - `git`
-- `claude` (Claude Code; checked against 2.1.310)
-- `codex` (the Codex CLI, used by the Codex plugin)
+- `claude` (Claude Code; checked against 2.1.317, the version Bedrock
+  mode's `--bare`, probe and alias behaviour were verified on)
+- `codex` (the Codex CLI, used by the Codex plugin; Bedrock mode was
+  verified on 0.165.0, so use that or later)
 - on Linux, `bubblewrap` and `socat` for Claude Code's sandbox. The settings
   set `sandbox.failIfUnavailable`, so a run fails rather than going
   unsandboxed when they are missing.
@@ -292,7 +363,11 @@ claude --bare -p --verbose --output-format stream-json --no-session-persistence 
 ```
 
 With `CLAUDE_CODE_OAUTH_TOKEN`, `--bare` is replaced by `--strict-mcp-config`:
-`--bare` never reads an OAuth token.
+`--bare` never reads an OAuth token. Bedrock mode keeps `--bare` and every
+other flag of API-key mode: checked on Claude Code 2.1.317 against a local
+Bedrock stub (`ANTHROPIC_BEDROCK_BASE_URL`, dummy credentials), `--bare`
+still sends SigV4-signed Bedrock requests (see
+[Bedrock stub checks](#bedrock-stub-checks)).
 
 The run dir holds `repo` (the work clone), `home` and `claude-config` (the
 child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
@@ -301,7 +376,15 @@ child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
 - **Environment.** The child's environment is exactly `PATH`, `HOME` and
   `CLAUDE_CONFIG_DIR` (fresh, empty dirs in the run dir, outside the clone),
   `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (whichever is set) and
-  `OPENAI_API_KEY`. It never sees `GITHUB_TOKEN`,
+  `OPENAI_API_KEY`. In Bedrock mode it is exactly `PATH`, `HOME`,
+  `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_USE_BEDROCK=1`, `AWS_REGION`,
+  `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
+  `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL` and
+  `ANTHROPIC_DEFAULT_FABLE_MODEL` (all `ANTHROPIC_MODEL`),
+  `ANTHROPIC_DEFAULT_HAIKU_MODEL`
+  (`ANTHROPIC_SMALL_FAST_MODEL`), `AWS_ACCESS_KEY_ID` and
+  `AWS_SECRET_ACCESS_KEY`, plus `AWS_SESSION_TOKEN` only when the
+  credentials have one. It never sees `GITHUB_TOKEN`,
   `SENTRY_CLIENT_SECRET` or any other variable of heinzel's.
 - **No ambient config.** `--bare` skips CLAUDE.md discovery, hooks, installed
   plugins and MCP servers; `--setting-sources ""` loads no user, project or
@@ -345,11 +428,18 @@ child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
   }
   ```
 
+  In Bedrock mode, `allowedDomains` is instead
+  `["bedrock-mantle.<CODEX_BEDROCK_REGION>.api.aws"]`, the one host Codex's
+  `amazon-bedrock` provider calls (per the Codex Bedrock docs and the stub
+  check), and not `api.openai.com`. Claude Code's own Bedrock calls come
+  from the `claude` process, outside the sandbox, so they need no entry.
+
   Shell commands run in the sandbox, which refuses to start unsandboxed and
   never retries a command outside it. They may write only to the work clone
   and the child's `HOME` (for Codex and tool caches; heinzel's git never uses
   it), plus the sandbox's own per-user temp dir, which Claude Code always
-  allows, and reach only the OpenAI API, for Codex. They may not read
+  allows, and reach only the OpenAI API (in Bedrock mode, Bedrock's Mantle
+  endpoint), for Codex. They may not read
   heinzel's `HOME`, the `INVESTIGATION_DENY_READ` paths or the work dir
   (`HOME` and each `INVESTIGATION_DENY_READ` path are listed both as given
   and, when it differs, with symlinks resolved, in `denyRead` and in the
@@ -385,10 +475,95 @@ child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
   `.gitconfig` Claude plants in its `HOME` (say a `url.<x>.insteadOf`)
   doesn't reach the push.
 - **Accepted exposure.** Claude can read `OPENAI_API_KEY`, which Codex needs;
-  use a dedicated, low-limit key. The child runs as heinzel's OS user and
+  use a dedicated, low-limit key. In Bedrock mode it can read the AWS
+  credentials instead (sandboxed commands see the child's env), so scope the
+  role to Bedrock invoke only, as [AWS needs](#aws-needs) lists, and nothing
+  else. The child runs as heinzel's OS user and
   can read whatever that user can outside the denied paths, and could
   inspect heinzel's processes; run heinzel as a dedicated user or in a
   container.
+
+#### AWS needs
+
+Exactly what Claude Code and Codex need in Bedrock mode, checked against
+the AWS Service Authorization Reference, the Bedrock user guide, the Claude
+Code and Codex Bedrock docs, and the stub checks below. 016.03 grants
+exactly this. `<region>` is `AWS_REGION`, `<codex region>`
+`CODEX_BEDROCK_REGION`, `<account>` the AWS account.
+
+- **Claude Code, invoke:** `bedrock:InvokeModel` and
+  `bedrock:InvokeModelWithResponseStream` on `ANTHROPIC_MODEL` and
+  `ANTHROPIC_SMALL_FAST_MODEL`. Apart from the startup probes (see expected
+  denials), only those two model ids are invoked by name: the child's
+  `opus`, `sonnet`, `fable` and `haiku` aliases are pinned to them, so a subagent or
+  skill with `model: sonnet` (such as the Codex plugin's `codex-rescue`)
+  stays on `ANTHROPIC_MODEL` (stub check (d)). The resources, by id form:
+  - a foundation-model id: `arn:aws:bedrock:<region>::foundation-model/<id>`;
+  - a geo inference profile (`us.`, `eu.`, `apac.`, …):
+    `arn:aws:bedrock:<region>:<account>:inference-profile/<profile id>`
+    plus `arn:aws:bedrock:<each region it routes to>::foundation-model/<model id>`;
+  - a global profile (`global.`):
+    `arn:aws:bedrock:<region>:<account>:inference-profile/global.<model id>`,
+    `arn:aws:bedrock:<region>::foundation-model/<model id>` and the
+    region-less `arn:aws:bedrock:::foundation-model/<model id>`, which AWS
+    requires for global routing (it is evaluated with
+    `aws:RequestedRegion` = `unspecified`). The foundation-model
+    statements can be conditioned on `bedrock:InferenceProfileArn`.
+- **Claude Code, profile lookup:** `bedrock:ListInferenceProfiles` on
+  `*`, since it supports no resource type, and `bedrock:GetInferenceProfile`
+  on the configured `inference-profile/<id>` ARNs (Claude Code calls
+  `GET /inference-profiles?type=SYSTEM_DEFINED` at startup). Whether a
+  denied lookup would block a run is unverified, so grant both.
+- **Claude Code, hosts:** `bedrock-runtime.<region>.amazonaws.com`
+  (invoke) and `bedrock.<region>.amazonaws.com` (profile lookup), from the
+  `claude` process itself.
+- **Codex:** `bedrock-mantle:CreateInference` on
+  `arn:aws:bedrock-mantle:<codex region>:<account>:project/*`, conditioned on
+  `bedrock-mantle:Model` = `CODEX_BEDROCK_MODEL`. The stub check saw Codex
+  call only `POST /openai/v1/responses`, signed for service
+  `bedrock-mantle`, and no `/models`, so no `ListModels`/`GetModel`.
+  Host: `bedrock-mantle.<codex region>.api.aws`, from sandboxed commands.
+  Only a real run settles whether Codex needs anything more.
+- **Not granted:** no `aws-marketplace:*` actions and nothing else. Enabling
+  model access is a one-time account setup, not a runtime need.
+- **Expected denials.** At startup Claude Code also probes `InvokeModel` on
+  about ten other Claude models (the `<region>`-geo profiles of other Opus,
+  Sonnet and Haiku versions). The role doesn't grant them, so they are
+  denied, and the run carries on with `ANTHROPIC_MODEL` (stub check (b)).
+  So the child does call models the role doesn't grant; they are just
+  refused. Codex likewise tries `chatgpt.com` and `github.com`, which the
+  sandbox's network allowlist refuses.
+
+#### Bedrock stub checks
+
+Run without an AWS account, with dummy credentials and a local stub
+(results from 2026-11-03):
+
+- **(a) `--bare` on Bedrock** (Claude Code 2.1.317, `ANTHROPIC_BEDROCK_BASE_URL`
+  at the stub, `--bare -p` and the other API-key-mode flags). Requests
+  arrive SigV4-signed (scope `<AWS_REGION>/bedrock`, with
+  `X-Amz-Security-Token`): `GET /inference-profiles?type=SYSTEM_DEFINED`,
+  then `POST /model/<id>/invoke` probes, then
+  `POST /model/<ANTHROPIC_MODEL>/invoke-with-response-stream`.
+- **(b) Startup probes.** With the stub answering 403
+  `AccessDeniedException` for every model but `ANTHROPIC_MODEL`, Claude Code
+  probed 11 other models (`eu.anthropic.claude-opus-5-5`,
+  `…-haiku-4-5-…`, `…-opus-4-x…`, `…-3-5-haiku-…`, `…-sonnet-4-5-…`), got
+  403s, and still sent the prompt to `ANTHROPIC_MODEL`. The probes don't
+  block the run.
+- **(c) Codex** (0.165.0, `codex exec`). With the generated config plus a
+  `base_url` override at the stub: only `POST /openai/v1/responses`, signed
+  with scope `<CODEX_BEDROCK_REGION>/bedrock-mantle` even though the env's
+  `AWS_REGION` differed; without the file's region it used `AWS_REGION`.
+  With the exact generated config and an HTTPS proxy at the stub, Codex
+  connected to `bedrock-mantle.<CODEX_BEDROCK_REGION>.api.aws:443`.
+- **(d) Model aliases** (Claude Code 2.1.317, an agent defined with
+  `model: sonnet` run via `--agents` and `--agent`, as (a) otherwise).
+  Without the `ANTHROPIC_DEFAULT_*_MODEL` vars its requests went to
+  `eu.anthropic.claude-sonnet-4-5-20250929-v1:0`, Claude Code's own default
+  for the alias, not `ANTHROPIC_MODEL`
+  (`global.anthropic.claude-sonnet-4-5-20250929-v1:0`); with them they went
+  to `ANTHROPIC_MODEL`.
 
 #### CI
 

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -40,7 +41,7 @@ const (
 )
 
 func TestClaudeFixesARealUpstreamBug(t *testing.T) {
-	credential := requireCredentials(t)
+	credentials := requireCredentials(t)
 	home := os.Getenv("HOME")
 	requireToolsOutside(t, home, "go", "node", "codex")
 	if _, err := exec.LookPath("claude"); err != nil {
@@ -57,12 +58,10 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 	requireBugReproduces(t, remote, fixedTest)
 
 	github := newFakeGitHub(t)
-	heinzel := startHeinzel(t, bin, map[string]string{
+	env := map[string]string{
 		"SENTRY_CLIENT_SECRET":   sentrySecret,
 		"SENTRY_GITHUB_REPOS":    strconv.Itoa(sentryProj) + "=hashicorp/go-version",
 		"GITHUB_TOKEN":           "system-test-dummy-token",
-		credential:               os.Getenv(credential),
-		"OPENAI_API_KEY":         os.Getenv("OPENAI_API_KEY"),
 		"CLAUDE_PLUGIN_DIRS":     strings.Join(copyPlugins(t, home), ","),
 		"INVESTIGATION_TIMEOUT":  "30m",
 		"INVESTIGATION_WORK_DIR": privateDir(t),
@@ -70,7 +69,9 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 		"PATH":                   os.Getenv("PATH"),
 		"GITHUB_API_URL":         github.url,
 		"GITHUB_CLONE_URL":       remotes + "/",
-	})
+	}
+	maps.Copy(env, credentials)
+	heinzel := startHeinzel(t, bin, env)
 
 	started := heinzel.waitFor(t, time.Now().Add(time.Minute), "app started", func(r map[string]any) bool {
 		return r["msg"] == "app started"
@@ -103,20 +104,53 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 	t.Logf("Upstream's fix:\n%s", git(t, upstream, "show", "--format=", upstreamFix, "--", "version.go"))
 }
 
-// requireCredentials fails unless the Claude and OpenAI credentials are
-// set, and returns the variable holding the Claude one.
-func requireCredentials(t *testing.T) string {
+// requireCredentials fails unless the model credentials are set, and
+// returns the variables to forward to heinzel. With
+// CLAUDE_CODE_USE_BEDROCK=1 those are the Bedrock settings and whichever AWS
+// credential variables are set, and never the Anthropic or OpenAI keys;
+// otherwise the Claude credential and OPENAI_API_KEY.
+func requireCredentials(t *testing.T) map[string]string {
 	t.Helper()
+	if os.Getenv("CLAUDE_CODE_USE_BEDROCK") == "1" {
+		return requireBedrock(t)
+	}
 	if os.Getenv("OPENAI_API_KEY") == "" {
 		t.Fatal("OPENAI_API_KEY must be set: the child runs Codex")
 	}
 	for _, v := range []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"} {
 		if os.Getenv(v) != "" {
-			return v
+			return map[string]string{v: os.Getenv(v), "OPENAI_API_KEY": os.Getenv("OPENAI_API_KEY")}
 		}
 	}
 	t.Fatal("CLAUDE_CODE_OAUTH_TOKEN (from claude setup-token) or ANTHROPIC_API_KEY must be set")
-	return ""
+	return nil
+}
+
+// requireBedrock is requireCredentials in Bedrock mode. heinzel resolves the
+// AWS credentials itself, through the SDK's default chain.
+func requireBedrock(t *testing.T) map[string]string {
+	t.Helper()
+	env := map[string]string{"CLAUDE_CODE_USE_BEDROCK": "1"}
+	for _, v := range []string{"AWS_REGION", "ANTHROPIC_MODEL", "CODEX_BEDROCK_MODEL"} {
+		if os.Getenv(v) == "" {
+			t.Fatalf("%s must be set in Bedrock mode", v)
+		}
+		env[v] = os.Getenv(v)
+	}
+	for _, v := range []string{
+		"ANTHROPIC_SMALL_FAST_MODEL", "CODEX_BEDROCK_REGION",
+		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+		"AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE",
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+		"AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_ROLE_SESSION_NAME",
+		"AWS_CA_BUNDLE",
+	} {
+		if value := os.Getenv(v); value != "" {
+			env[v] = value
+		}
+	}
+	return env
 }
 
 // requireToolsOutside fails unless each tool is on PATH outside home: the

@@ -24,7 +24,7 @@ Run heinzel on AWS: one ECS service behind an ALB, provisioned with OpenTofu, wi
 
 | #   | Task                              | File                              | Status |
 | --- | --------------------------------- | --------------------------------- | ------ |
-| 01  | Bedrock mode for Claude and Codex | 016.01-bedrock-mode.md            | ready-for-dev |
+| 01  | Bedrock mode for Claude and Codex | 016.01-bedrock-mode.md            | done   |
 | 02  | Container image                   | 016.02-container-image.md         | ready-for-dev |
 | 03  | OpenTofu infra: ECS + ALB         | 016.03-opentofu-ecs-alb.md        | ready-for-dev |
 | 04  | Post-deploy system test           | 016.04-post-deploy-system-test.md | ready-for-dev |

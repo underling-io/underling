@@ -207,3 +207,84 @@ func TestSandboxSettingsDenySymlinkedPathsAndTheirTargets(t *testing.T) {
 		t.Errorf("deny = %q, want it to start with %q", got.Permissions.Deny, wantRules)
 	}
 }
+
+// bedrockConfig is testConfig in Bedrock mode, without the two keys.
+func bedrockConfig(sessionToken string) Config {
+	cfg := testConfig()
+	cfg.Anthropic, cfg.OpenAIKey = Credential{}, ""
+	cfg.Bedrock = &Bedrock{
+		Region:         "eu-central-1",
+		Model:          "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		SmallFastModel: "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+		CodexRegion:    "eu-west-1",
+		Credentials:    AWSCredentials{AccessKeyID: "AKIATEST", SecretAccessKey: "aws-secret", SessionToken: sessionToken},
+	}
+	return cfg
+}
+
+func TestCommandArgvInBedrockModeKeepsBare(t *testing.T) {
+	cfg := bedrockConfig("aws-session")
+	cmd, err := Command(cfg, testDirs(), "the prompt")
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	want := []string{
+		"--bare", "-p",
+		"--verbose", "--output-format", "stream-json",
+		"--no-session-persistence",
+		"--setting-sources", "",
+		"--settings", string(settingsJSON(t, cfg)),
+		"--permission-mode", "acceptEdits",
+		"--permission-prompts", "none",
+		"--plugin-dir", "/p/codex",
+		"--plugin-dir", "/p/auto-task",
+	}
+	if !slices.Equal(cmd.args, want) {
+		t.Fatalf("args = %q, want %q", cmd.args, want)
+	}
+}
+
+func TestCommandEnvInBedrockModeHoldsTheAWSCredentialsInsteadOfKeys(t *testing.T) {
+	base := []string{
+		"PATH=/usr/bin:/bin",
+		"HOME=/w/run/home",
+		"CLAUDE_CONFIG_DIR=/w/run/claude-config",
+		"CLAUDE_CODE_USE_BEDROCK=1",
+		"AWS_REGION=eu-central-1",
+		"ANTHROPIC_MODEL=global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"ANTHROPIC_SMALL_FAST_MODEL=eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL=global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL=global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"ANTHROPIC_DEFAULT_FABLE_MODEL=global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL=eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+		"AWS_ACCESS_KEY_ID=AKIATEST",
+		"AWS_SECRET_ACCESS_KEY=aws-secret",
+	}
+	for name, tt := range map[string]struct {
+		sessionToken string
+		want         []string
+	}{
+		"with a session token":    {"aws-session", append(slices.Clone(base), "AWS_SESSION_TOKEN=aws-session")},
+		"without a session token": {"", base},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cmd, err := Command(bedrockConfig(tt.sessionToken), testDirs(), "p")
+			if err != nil {
+				t.Fatalf("Command: %v", err)
+			}
+			if !slices.Equal(cmd.env, tt.want) {
+				t.Fatalf("env = %q, want %q", cmd.env, tt.want)
+			}
+		})
+	}
+}
+
+func TestSandboxSettingsInBedrockModeAllowOnlyCodexsBedrockHost(t *testing.T) {
+	got := sandboxSettings(bedrockConfig(""), testDirs())
+	if want := []string{"bedrock-mantle.eu-west-1.api.aws"}; !slices.Equal(got.Sandbox.Network.AllowedDomains, want) {
+		t.Fatalf("allowedDomains = %q, want %q", got.Sandbox.Network.AllowedDomains, want)
+	}
+	if want := sandboxSettings(testConfig(), testDirs()); !reflect.DeepEqual(got.Permissions, want.Permissions) || !reflect.DeepEqual(got.Sandbox.Filesystem, want.Sandbox.Filesystem) {
+		t.Errorf("Bedrock mode changed more than the network: %+v", got)
+	}
+}
