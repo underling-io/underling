@@ -1,7 +1,7 @@
 ---
 title: Deploy heinzel to AWS ECS with Bedrock
 date: 2026-11-03
-status: ready-for-dev
+status: ready-for-signoff
 type: feat
 ---
 
@@ -28,8 +28,9 @@ Run heinzel on AWS: one ECS service behind an ALB, provisioned with OpenTofu, wi
 | 01  | Bedrock mode for Claude and Codex | 016.01-bedrock-mode.md            | done   |
 | 02  | Container image                   | 016.02-container-image.md         | done   |
 | 03  | OpenTofu infra: ECS + ALB         | 016.03-opentofu-ecs-alb.md        | done   |
-| 04  | Post-deploy system test           | 016.04-post-deploy-system-test.md | ready-for-dev |
+| 04  | Post-deploy system test           | 016.04-post-deploy-system-test.md | done   |
 
 ## Notes
 
 - **016.03 (OpenTofu infra).** `make infra-check` (init, `fmt -check`, `validate`, and `tofu test` against a mocked AWS provider) passes without AWS credentials; that is the bar here. No AWS credentials were available, so these pass to the user: the first real apply (infra/README.md runbook), the Fargate probe, the two IAM points only a real run settles (the global profile's region-less foundation-model ARN under the `bedrock:InferenceProfileArn` condition, and whether `bedrock-mantle:Model` compares against the plain id), and whether ECS rotates task-role credentials more than `INVESTIGATION_TIMEOUT` before expiry. The Fargate probe is expected to fail (`bwrap: No permissions to create new namespace`, as in 016.02's smoke); then the rollout stops and 016.05 opens.
+- **016.04 (post-deploy system test).** `make postdeploy-test` compiles under its tag and, with no inputs, fails at the input check naming all five variables; `make check` stays green. No deployed stack or tokens were available, so the real run passes to the user (infra/README.md § Post-deploy system test). It also settles whether heinzel can push a branch whose history holds `.github/workflows` without the workflow scope.

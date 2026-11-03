@@ -4,9 +4,6 @@ package systemtest
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -23,16 +20,13 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"heinzel/internal/systemtest/upstreamfix"
 )
 
-// The bug: Version.Core panics on a zero-value Version. upstreamFix fixed
-// it and added TestCoreZeroValue; heinzel gets the repo as it was just
-// before.
+// The bug is upstreamfix's; heinzel gets the repo as it was at the fix's
+// parent.
 const (
-	upstreamURL  = "https://github.com/hashicorp/go-version.git"
-	upstreamFix  = "c6a3b5735e33d3e07a9cfbc8343e84b69d471b80"
-	upstreamTest = "TestCoreZeroValue"
-
 	sentrySecret = "system-test-sentry-secret"
 	sentryProj   = 7
 	issueID      = "6100000001"
@@ -49,13 +43,13 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 	}
 	bin := buildHeinzel(t)
 
-	upstream := t.TempDir()
-	git(t, "", "clone", "--quiet", upstreamURL, upstream)
-	fixedTest := git(t, upstream, "show", upstreamFix+":version_test.go")
+	upstream := upstreamfix.Clone(t)
 	remotes := t.TempDir()
 	remote := filepath.Join(remotes, "hashicorp", "go-version.git")
 	serveParentOfFix(t, upstream, remote)
-	requireBugReproduces(t, remote, fixedTest)
+	precondition := t.TempDir()
+	upstreamfix.Git(t, "", "clone", "--quiet", remote, precondition)
+	upstreamfix.RequireBugReproduces(t, precondition, upstream)
 
 	github := newFakeGitHub(t)
 	env := map[string]string{
@@ -80,7 +74,11 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 	if addr == "" {
 		t.Fatalf("app started record has no addr: %v", started)
 	}
-	postAlert(t, addr)
+	upstreamfix.PostAlert(t, "http://"+addr+"/sentry/callback", sentrySecret, upstreamfix.Alert{
+		EventID: "5f1c0e3a9b2d4c7e8a6b1d0f2e3c4b5a",
+		IssueID: issueID,
+		Project: sentryProj,
+	})
 	finished := heinzel.waitFor(t, investigationDeadline(t), "investigation finished", func(r map[string]any) bool {
 		return r["msg"] == "sentry issue investigation finished" && r["issueId"] == issueID
 	})
@@ -92,16 +90,9 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 	}
 
 	fixed := t.TempDir()
-	git(t, "", "clone", "--quiet", "--branch", branch, remote, fixed)
-	writeFile(t, filepath.Join(fixed, "version_test.go"), fixedTest)
-	if out, err := goTest(fixed, "-run", "^"+upstreamTest+"$", "."); err != nil {
-		t.Errorf("%s fails on Claude's branch: %v\n%s", upstreamTest, err, out)
-	}
-	if out, err := goTest(fixed, "./..."); err != nil {
-		t.Errorf("go-version's tests fail on Claude's branch: %v\n%s", err, out)
-	}
-	t.Logf("Claude's fix:\n%s", git(t, fixed, "diff", upstreamFix+"^", "HEAD", "--", "version.go"))
-	t.Logf("Upstream's fix:\n%s", git(t, upstream, "show", "--format=", upstreamFix, "--", "version.go"))
+	upstreamfix.Git(t, "", "clone", "--quiet", "--branch", branch, remote, fixed)
+	upstreamfix.CheckFix(t, fixed, upstream)
+	upstreamfix.LogComparison(t, fixed, upstream)
 }
 
 // requireCredentials fails unless the model credentials are set, and
@@ -223,24 +214,11 @@ func compareVersions(a, b string) int {
 
 // serveParentOfFix makes remote a bare repo whose only branch, main, is
 // the commit before the fix, so the fix isn't reachable.
-func serveParentOfFix(t *testing.T, upstream, remote string) {
+func serveParentOfFix(t *testing.T, u upstreamfix.Upstream, remote string) {
 	t.Helper()
-	git(t, upstream, "branch", "--force", "system-test-base", upstreamFix+"^")
-	git(t, "", "init", "--quiet", "--bare", "--initial-branch=main", remote)
-	git(t, remote, "fetch", "--quiet", "--no-tags", upstream, "refs/heads/system-test-base:refs/heads/main")
-}
-
-// requireBugReproduces fails unless upstream's regression test runs and
-// fails on what remote serves.
-func requireBugReproduces(t *testing.T, remote, fixedTest string) {
-	t.Helper()
-	dir := t.TempDir()
-	git(t, "", "clone", "--quiet", remote, dir)
-	writeFile(t, filepath.Join(dir, "version_test.go"), fixedTest)
-	out, err := goTest(dir, "-v", "-run", "^"+upstreamTest+"$", ".")
-	if err == nil || !strings.Contains(out, "--- FAIL: "+upstreamTest) {
-		t.Fatalf("%s should run and fail before the fix, got %v:\n%s", upstreamTest, err, out)
-	}
+	upstreamfix.Git(t, u.Dir, "branch", "--force", "system-test-base", u.Parent)
+	upstreamfix.Git(t, "", "init", "--quiet", "--bare", "--initial-branch=main", remote)
+	upstreamfix.Git(t, remote, "fetch", "--quiet", "--no-tags", u.Dir, "refs/heads/system-test-base:refs/heads/main")
 }
 
 // buildHeinzel builds heinzel's command into a temp dir and returns the
@@ -339,53 +317,6 @@ func (h *heinzelProcess) waitFor(t *testing.T, deadline time.Time, what string, 
 	}
 }
 
-// postAlert sends Sentry's alert for the panic, as the Go SDK reports it.
-func postAlert(t *testing.T, addr string) {
-	t.Helper()
-	const culprit = "github.com/hashicorp/go-version.(*Version).Core"
-	frame := map[string]any{"filename": "version.go", "function": culprit, "lineno": 376}
-	body, err := json.Marshal(map[string]any{
-		"action": "triggered",
-		"data": map[string]any{
-			"triggered_rule": "New issue",
-			"event": map[string]any{
-				"event_id": "5f1c0e3a9b2d4c7e8a6b1d0f2e3c4b5a",
-				"issue_id": issueID,
-				"project":  sentryProj,
-				"title":    "runtime.Error: index out of range [0] with length 0",
-				"level":    "fatal",
-				"web_url":  "https://sentry.io/organizations/acme/issues/" + issueID + "/",
-				"culprit":  culprit,
-				"exception": map[string]any{"values": []any{map[string]any{
-					"type":       "runtime.Error",
-					"value":      "index out of range [0] with length 0",
-					"stacktrace": map[string]any{"frames": []any{frame}},
-				}}},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/sentry/callback", bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	mac := hmac.New(sha256.New, []byte(sentrySecret))
-	mac.Write(body)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Sentry-Hook-Resource", "event_alert")
-	req.Header.Set("Sentry-Hook-Signature", hex.EncodeToString(mac.Sum(nil)))
-	resp, err := (&http.Client{Timeout: time.Minute}).Do(req)
-	if err != nil {
-		t.Fatalf("POST /sentry/callback: %v", err)
-	}
-	defer resp.Body.Close()
-	if raw, _ := io.ReadAll(resp.Body); resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /sentry/callback: %d %s", resp.StatusCode, raw)
-	}
-}
-
 // investigationDeadline leaves a minute of the test's own timeout for the
 // checks after the investigation.
 func investigationDeadline(t *testing.T) time.Time {
@@ -404,35 +335,6 @@ func privateDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
-}
-
-func writeFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// git runs git in dir ("" for the current dir) and returns its trimmed
-// output.
-func git(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", append([]string{"-c", "advice.detachedHead=false"}, args...)...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// goTest runs go-version's tests in dir with the local toolchain.
-func goTest(dir string, args ...string) (string, error) {
-	cmd := exec.Command("go", append([]string{"test", "-count=1"}, args...)...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local")
-	out, err := cmd.CombinedOutput()
-	return string(out), err
 }
 
 // fakeGitHub is a local server that answers every request as a created

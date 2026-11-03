@@ -16,7 +16,7 @@ PLUGIN_CACHE ?= $(HOME)/.claude/plugins/cache
 # Written by image-context; read by image-build.
 -include bin/image/plugin-versions.mk
 
-.PHONY: build-linux-arm64 check system-test image-context image image-build image-push image-smoke infra-check clean
+.PHONY: build-linux-arm64 check system-test postdeploy-test image-context image image-build image-push image-smoke infra-check clean
 
 build-linux-arm64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o $(BINARY) ./cmd/heinzel
@@ -35,6 +35,17 @@ check:
 # instead of the keys.
 system-test:
 	go test -tags system -timeout 45m -v -count=1 ./internal/systemtest
+
+# Drives a deployed heinzel through its public webhook and checks the fix in
+# a real GitHub repo (infra/README.md § Post-deploy system test). Costs
+# Bedrock tokens, takes up to an hour, and FORCE-PUSHES the target repo's
+# default branch, deleting its heinzel/* branches and closing their PRs.
+# Needs POSTDEPLOY_BASE_URL (https), SENTRY_CLIENT_SECRET,
+# POSTDEPLOY_SENTRY_PROJECT_ID, POSTDEPLOY_GITHUB_REPO (owner/name of a
+# throwaway repo) and POSTDEPLOY_GITHUB_TOKEN (never GITHUB_TOKEN);
+# optionally POSTDEPLOY_LOG_GROUP (default /ecs/heinzel).
+postdeploy-test:
+	go test -tags postdeploy -timeout 60m -v -count=1 ./internal/systemtest/postdeploy
 
 # Stages the image's build context in bin/image: the binary, the sandbox
 # probe, the newest version dir of each plugin (without .in_use/, which

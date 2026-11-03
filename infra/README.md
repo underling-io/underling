@@ -201,6 +201,75 @@ aws ecs describe-tasks --cluster heinzel \
 Expect a short window with no receiver. A failed deploy rolls back on its
 own (circuit breaker). To roll back by hand, apply the old tag.
 
+## Post-deploy system test
+
+`make postdeploy-test` drives the deployed heinzel end to end. It resets a
+throwaway GitHub repo to go-version at the parent of c6a3b57, posts a signed
+Sentry alert for go-version's real panic to `<base_url>/sentry/callback`,
+waits up to 45 minutes for heinzel's draft PR from
+`heinzel/sentry-<issueId>`, and runs upstream's regression test and
+go-version's suite on that branch (as `make system-test` does locally).
+
+### The throwaway repo
+
+- A new repo you own, not a fork, created with no initial commit (no README,
+  licence or .gitignore) or touched only by this test. A repo with branches
+  is refused unless its default branch sits at go-version's parent of the
+  fix, where every earlier reset left it.
+- The verdict runs Claude's code with `go test` and only the go command's
+  env (PATH, HOME, GO*). HOME stays, so run the test as a user whose HOME
+  holds nothing you'd mind that code reading, e.g. no `~/.aws` credentials.
+- GitHub Actions disabled (Settings → Actions → General → Disable actions):
+  go-version's history may contain workflows, which must not run on resets
+  and pushes.
+- No branch protection or rulesets on the default branch: the test
+  force-pushes it.
+- No tags and no branches besides the default and `heinzel/*`. The test
+  refuses to touch a repo that has any, since heinzel's clone would fetch
+  them and they could hold the fix.
+- Mapped in `sentry_github_repos`: `<projectId>=<owner>/<repo>`, with the
+  project id you pass to the test.
+
+The deployed `GITHUB_TOKEN` needs contents and pull-requests write on the
+repo, and still no `workflow` scope.
+
+The test's own token is a fine-grained PAT for that repo only, with
+Contents, Pull requests and Workflows read/write (Workflows because the
+reset pushes go-version's history, which may touch `.github/workflows`).
+The test never reads `GITHUB_TOKEN`.
+
+### Running it
+
+```sh
+read -rs SENTRY_CLIENT_SECRET && export SENTRY_CLIENT_SECRET        # the integration's client secret
+read -rs POSTDEPLOY_GITHUB_TOKEN && export POSTDEPLOY_GITHUB_TOKEN  # the test's PAT
+POSTDEPLOY_BASE_URL=$(tofu -chdir=infra output -raw base_url) \
+POSTDEPLOY_LOG_GROUP=$(tofu -chdir=infra output -raw log_group_name) \
+POSTDEPLOY_SENTRY_PROJECT_ID=<projectId> \
+POSTDEPLOY_GITHUB_REPO=<owner>/<repo> \
+make postdeploy-test
+```
+
+Expect about 50 minutes at most, and real Bedrock usage. It is
+destructive: it force-pushes the repo's default branch, deletes its
+`heinzel/*` branches and closes their open PRs. heinzel's PR stays open
+until the next run.
+
+Each run posts new event and issue ids, because the deployed store
+dedupes them for the task's whole life. A missing variable fails the test
+before any network call, naming each one.
+
+If no PR appears in time, the failure names the issue id and the command
+to read the run's logs:
+
+```sh
+aws logs tail /ecs/heinzel --since 1h --filter-pattern '"<issueId>"'
+```
+
+A run that ends as Skipped `unmapped` means `sentry_github_repos` doesn't
+map the project id to the repo. An early failure (such as the sandbox
+failing on Fargate) also surfaces only as this timeout.
+
 ## Notes
 
 - **Logs:** CloudWatch log group `/ecs/heinzel`. The service's streams start
