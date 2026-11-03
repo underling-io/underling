@@ -48,11 +48,14 @@ func ParseFlags(args []string, output io.Writer) (Config, error) {
 }
 
 // Router returns the HTTP handler serving the state changes' routes on
-// store. Unknown paths get 404 and known paths with another method 405.
+// store, plus the platform's GET /healthz, which answers 200 "ok" without
+// auth or touching the store. Unknown paths get 404 and known paths with
+// another method 405.
 func Router(store *eventstore.Store, stateChanges []StateChange) http.Handler {
 	r := gin.New()
 	r.HandleMethodNotAllowed = true
 	r.RedirectTrailingSlash = false
+	r.GET("/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 	for _, sc := range stateChanges {
 		r.Handle(sc.Method, sc.Path, sc.Handler(store))
 	}

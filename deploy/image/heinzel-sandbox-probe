@@ -1,0 +1,75 @@
+#!/bin/sh
+# heinzel-sandbox-probe checks that this container can run Claude Code's
+# sandbox. As a non-root user it runs a bwrap argv that mirrors claude
+# 2.1.317's Linux sandbox invocation (user, pid and net namespaces with
+# nested user namespaces disabled, a read-only root, one writable bind, a
+# tmpfs over HOME standing in for a deny-read path, /dev, /proc, bash) and
+# checks the isolation from inside. bwrap's stderr passes through. The last
+# line is "sandbox probe: PASS" (exit 0) or "sandbox probe: FAIL: <reason>"
+# (exit 1).
+set -u
+
+fail() {
+	echo "sandbox probe: FAIL: $*"
+	exit 1
+}
+
+[ "$(id -u)" -ne 0 ] || fail "running as root; run as the heinzel user"
+command -v bwrap >/dev/null 2>&1 || fail "bwrap not found on PATH"
+command -v socat >/dev/null 2>&1 || fail "socat not found on PATH"
+command -v bash >/dev/null 2>&1 || fail "bash not found on PATH"
+[ -n "${HOME:-}" ] && [ -d "$HOME" ] || fail "HOME is unset or not a directory"
+# The canonical HOME, so the mountinfo check matches it; the writable bind
+# lives in /tmp, outside it, so the tmpfs over HOME can't hide the bind.
+home=$(cd "$HOME" && pwd -P) || fail "cannot resolve HOME"
+case $home in /tmp | /tmp/*) fail "HOME $home is under /tmp, where the writable bind lives" ;; esac
+
+d=$(mktemp -d /tmp/heinzel-sandbox-probe.XXXXXX) || fail "mktemp -d failed"
+trap 'rm -rf "$d"' EXIT
+
+# Runs inside the sandbox with the writable bind as $1, HOME as $2 and the
+# outer pid and net namespaces as $3 and $4. It prints "ok" or the reason it
+# failed. A near-empty container shows few pids even without a pid
+# namespace, and a new net namespace can hold more than lo (some kernels add
+# down fallback tunnel devices such as tunl0), so both checks compare
+# namespace ids too.
+checks='
+d=$1 home=$2 outer_pid=$3 outer_net=$4
+(echo probe >"$d/probe") 2>/dev/null || { echo "cannot write to the writable bind $d"; exit 1; }
+for p in / "${d%/*}"; do
+	if (echo probe >"$p/heinzel-sandbox-probe") 2>/dev/null; then
+		echo "$p is writable, want a read-only root"
+		exit 1
+	fi
+done
+fstype=$(awk -v m="$home" "{ split(\$0, f, \" - \"); split(f[1], a, \" \"); split(f[2], b, \" \"); if (a[5] == m) t = b[1] } END { print t }" /proc/self/mountinfo)
+[ "$fstype" = tmpfs ] || { echo "$home is mounted as ${fstype:-nothing}, want the tmpfs over it"; exit 1; }
+[ -z "$(ls -A "$home")" ] || { echo "$home is not empty, want the tmpfs to hide it"; exit 1; }
+[ "$(readlink /proc/self/ns/pid)" != "$outer_pid" ] || { echo "same pid namespace as outside, want a new one"; exit 1; }
+set -- /proc/[0-9]*
+[ $# -le 3 ] || { echo "/proc shows $# pids, want at most 3 (no pid namespace)"; exit 1; }
+[ "$(readlink /proc/self/ns/net)" != "$outer_net" ] || { echo "same net namespace as outside, want a new one"; exit 1; }
+routes=$(tail -n +2 /proc/net/route | wc -l)
+[ "$routes" -eq 0 ] || { echo "$routes routes, want none (network reachable)"; exit 1; }
+command -v unshare >/dev/null || { echo "unshare not found on PATH"; exit 1; }
+if err=$(unshare -U true 2>&1); then
+	echo "unshare -U succeeded, want nested user namespaces disabled"
+	exit 1
+fi
+case $err in
+*"No space left on device"*) ;;
+*) echo "unshare -U failed for another reason, want ENOSPC from --disable-userns: $err"; exit 1 ;;
+esac
+echo ok
+'
+
+out=$(bwrap --new-session --die-with-parent --unshare-user --disable-userns --unshare-pid --unshare-net \
+	--ro-bind / / --bind "$d" "$d" --tmpfs "$home" --dev /dev --proc /proc --cap-drop ALL \
+	-- bash -c "$checks" probe "$d" "$home" "$(readlink /proc/self/ns/pid)" "$(readlink /proc/self/ns/net)")
+status=$?
+if [ "$status" -ne 0 ]; then
+	[ -n "$out" ] || fail "bwrap exited $status"
+	fail "$out"
+fi
+[ "$out" = ok ] || fail "unexpected output: $out"
+echo "sandbox probe: PASS"

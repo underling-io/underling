@@ -17,6 +17,11 @@ variables. Other flags: `-addr` (default `:8080`) and `-shutdown-timeout`
 (default `10s`). Invalid arguments or configuration exit with status 2, a
 runtime error with 1.
 
+Besides the slices' routes, the `app` router serves one platform route:
+`GET /healthz` answers 200 with body `ok` once heinzel is listening. It has
+no auth, writes no event and doesn't touch the store; another method on it
+gets 405. The [container image](#container-image)'s health check uses it.
+
 ## Event store
 
 The event store is embedded: [hallgren/eventsourcing](https://github.com/hallgren/eventsourcing)'s
@@ -339,9 +344,17 @@ The host (the binary ships as linux-arm64) needs on `PATH`:
   mode's `--bare`, probe and alias behaviour were verified on)
 - `codex` (the Codex CLI, used by the Codex plugin; Bedrock mode was
   verified on 0.165.0, so use that or later)
+- `node`, which the Codex plugin's scripts run on
 - on Linux, `bubblewrap` and `socat` for Claude Code's sandbox. The settings
   set `sandbox.failIfUnavailable`, so a run fails rather than going
   unsandboxed when they are missing.
+- the target repo's toolchain (`go` for a Go repo), outside `HOME` and
+  working offline. The child's env is an exact allowlist, so a variable like
+  `GOTOOLCHAIN=local` set in heinzel's env never reaches the child's
+  `go test`; set it in `$GOROOT/go.env` instead, or Go tries to download
+  the toolchain the repo's `go.mod` asks for. The sandbox has no module proxy
+  access either, so a target repo's tests can only use modules already
+  present (vendored, or in the toolchain).
 
 It also needs the Codex and auto-task plugins unpacked in the dirs named by
 `CLAUDE_PLUGIN_DIRS`, outside heinzel's `HOME`.
@@ -576,6 +589,135 @@ The residual risk is build scripts that existing push-triggered CI runs
 whatever secrets that CI exposes to pushes. Limit secrets to protected
 branches or environments. The follow-up is to push to a fork and open the PR
 from there, so the branch never runs the upstream repo's push CI.
+
+## Container image
+
+`deploy/image/Dockerfile` builds a linux/arm64 image that runs heinzel in
+[Bedrock mode](#bedrock-mode) with every [host
+prerequisite](#host-prerequisites). The Dockerfile is the one place
+versions are pinned: base `node:22.23.4-bookworm-slim` pinned by its
+multi-arch index digest, Claude Code 2.1.317 (the native binary,
+sha256-checked against the release manifest), Codex 0.165.0 (npm), Go 1.27.3
+(sha256-checked), bubblewrap 0.8.0 (build arg `BWRAP_VERSION`) and Debian's
+`git`, `socat` and `curl`. The build asserts each tool's version, so it fails
+if apt installs a bubblewrap other than the one the [sandbox
+probe](#sandbox-probe) result holds for, and that `go env GOTOOLCHAIN` prints
+`local` with an empty env.
+
+- **User.** `heinzel`, uid/gid 10001, `HOME=/home/heinzel`. Every tool lives
+  outside `HOME`: `/usr/local/bin` (`heinzel`, `claude`, `codex`,
+  `heinzel-sandbox-probe`) and `/usr/local/go`, with `GOTOOLCHAIN=local` in
+  `/usr/local/go/go.env`.
+- **Paths.** `/var/lib/heinzel` (root, 0755) holds `data` (the event store)
+  and `work` (the per-run dirs), both heinzel's and 0700. The Codex and
+  auto-task plugins are in `/opt/heinzel/plugins/{codex,at}`, root-owned and
+  world-readable.
+- **ENV.** `HOME`, `PATH` (`/usr/local/go/bin` first, nothing under `HOME`),
+  `INVESTIGATION_WORK_DIR=/var/lib/heinzel/work`,
+  `INVESTIGATION_DENY_READ=/var/lib/heinzel/data` (exactly the data dir: a
+  parent would contain the work dir and fail startup),
+  `CLAUDE_PLUGIN_DIRS=/opt/heinzel/plugins/codex,/opt/heinzel/plugins/at`,
+  `CLAUDE_CODE_USE_BEDROCK=1` and `GOTOOLCHAIN=local`. A deployment adds only
+  `SENTRY_GITHUB_REPOS`, `GITHUB_TOKEN`, `SENTRY_CLIENT_SECRET`,
+  `AWS_REGION`, `ANTHROPIC_MODEL`, `CODEX_BEDROCK_MODEL` and, optionally,
+  the other Bedrock and investigation variables. Startup logs no "won't run
+  inside the sandbox" warning.
+- **Labels.** `heinzel.claude`, `heinzel.codex`, `heinzel.go`,
+  `heinzel.bwrap`, `heinzel.plugins.codex` and `heinzel.plugins.at`, each the version inside.
+- **Runtime.** `USER heinzel`, `EXPOSE 8080`, no entrypoint and
+  `CMD ["heinzel","-addr",":8080","-data-dir","/var/lib/heinzel/data"]`, so a
+  probe task only overrides the command with `["heinzel-sandbox-probe"]`.
+  `HEALTHCHECK` runs `curl -fsS http://127.0.0.1:8080/healthz` every 10s
+  (timeout 3s, start period 15s, 3 retries).
+- **Writable root.** Don't set `readonlyRootFilesystem`: `/tmp`, `HOME`,
+  `/var/lib/heinzel/data` and `/var/lib/heinzel/work` must be writable.
+
+Make targets (all but `image-context` need Docker):
+
+- `make image-context` stages the build context in `bin/image`: the
+  linux-arm64 binary, the probe, and the newest version dir (`sort -V`, the
+  system test's rule) of `openai-codex/codex` and `auto-task/at` under
+  `PLUGIN_CACHE` (default `~/.claude/plugins/cache`), without their
+  `.in_use/`. It records the two versions in `bin/image/plugin-versions.mk`.
+- `make image` builds `$(IMAGE):$(IMAGE_TAG)` (defaults `heinzel` and the
+  12-character `HEAD` commit, with a `-dirty` suffix when `git status
+  --porcelain` shows uncommitted or untracked changes), passing the plugin
+  versions as the required build args `CODEX_PLUGIN_VERSION` and
+  `AT_PLUGIN_VERSION`.
+- `make image-push ECR_REPOSITORY_URL=<account>.dkr.ecr.<region>.amazonaws.com/<repo>`
+  logs in to that registry (the region comes from its host) with
+  `aws ecr get-login-password`, tags and pushes `<url>:$(IMAGE_TAG)` and
+  prints the ref. Without the variable it prints a usage message and fails.
+  It refuses a `-dirty` tag unless `IMAGE_TAG` was set explicitly (on the
+  command line or in the environment).
+- `make image-smoke` builds, then runs `deploy/image/smoke.sh`.
+
+### Sandbox probe
+
+`heinzel-sandbox-probe` checks whether a container can run Claude Code's
+sandbox. It fails when run as root or when `bwrap` or `socat` is missing.
+Otherwise it runs, with a fresh `mktemp -d` dir `$d`, a bwrap argv that
+mirrors claude 2.1.317's Linux sandbox invocation (namespaces, mounts,
+userns disable), with a `--tmpfs` over `HOME` standing in for a deny-read
+path:
+
+```
+bwrap --new-session --die-with-parent --unshare-user --disable-userns --unshare-pid --unshare-net \
+  --ro-bind / / --bind "$d" "$d" --tmpfs "$HOME" --dev /dev --proc /proc --cap-drop ALL \
+  -- bash -c '<checks>'
+```
+
+Inside, it checks that a write to `$d` succeeds; that writes to `/` and to
+`$d`'s parent (`/tmp`, writable outside) fail; that `HOME` is a tmpfs and
+empty; that the pid and net namespaces differ from the outer ones; that
+`/proc` shows at most 3 pids; that `/proc/net/route` has no routes; and that
+a nested `unshare -U` fails. bwrap's stderr passes through.
+The last line is `sandbox probe: PASS` (exit 0) or
+`sandbox probe: FAIL: <reason>` (exit 1). It checks namespaces and mounts
+only: Claude Code's own sandbox starts only inside a model turn, which dummy
+credentials can't produce.
+
+A new net namespace isn't always just `lo`: on Docker Desktop's kernel it
+also holds down fallback tunnel devices (`tunl0`, `gre0`, ...), so the probe
+compares namespace ids and routes rather than listing interfaces.
+
+### Smoke
+
+`deploy/image/smoke.sh <image>` runs the image with `--network none
+--cap-add SYS_PTRACE` and nothing else (no `--privileged`, no
+`--security-opt`), the settings Fargate allows, and dummy config:
+`SENTRY_GITHUB_REPOS=1=acme/app`, dummy `GITHUB_TOKEN`,
+`SENTRY_CLIENT_SECRET`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`,
+`AWS_REGION=eu-central-1`,
+`ANTHROPIC_MODEL=global.anthropic.claude-sonnet-4-5-20250929-v1:0` and
+`CODEX_BEDROCK_MODEL=openai.gpt-oss-120b`. It prints one PASS/FAIL line per
+check:
+
+1. `"msg":"app started"` is logged within 30s, with no "won't run inside
+   the sandbox" line;
+2. `GET /healthz` (via `docker exec … curl`) returns 200;
+3. `heinzel-sandbox-probe` passes.
+
+Checks 1–2 failing exit 1. A probe failure prints a warning that Fargate
+likely can't run the sandbox and exits 0, unless `SMOKE_REQUIRE_PROBE=1`.
+The container is always removed.
+
+Recorded result (Docker 28.5.1, arm64, bubblewrap 0.8.0): checks 1–2 pass;
+the probe fails with `bwrap: No permissions to create new namespace`, the
+early warning that Fargate's settings can't run the sandbox. Under looser
+local settings the probe gives:
+
+| Docker settings | Probe |
+| --- | --- |
+| Default seccomp, with `SYS_PTRACE` (the smoke) | FAIL: `No permissions to create new namespace` |
+| `seccomp=unconfined` | FAIL: `Can't mount proc on /newroot/proc` |
+| `seccomp=unconfined` + `systempaths=unconfined` | PASS |
+
+So even ECS on EC2 would need unconfined seccomp plus an unmasked `/proc`,
+or Claude Code's `enableWeakerNestedSandbox` (`--bind /proc /proc`), which
+lets sandboxed commands read `/proc/<heinzel pid>/environ`, `GITHUB_TOKEN`
+included. That's a security decision for 016.03/016.05; the image enables
+neither.
 
 ## Adding a slice
 

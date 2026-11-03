@@ -377,6 +377,8 @@ func TestTheRouterServesStateChangesOnTheStore(t *testing.T) {
 		{http.MethodGet, "/append/b", http.StatusMethodNotAllowed},
 		{http.MethodPost, "/append/c/", http.StatusNotFound},
 		{http.MethodPost, "/nowhere", http.StatusNotFound},
+		{http.MethodGet, "/healthz", http.StatusOK},
+		{http.MethodPost, "/healthz", http.StatusMethodNotAllowed},
 	}
 	for _, tt := range tests {
 		rec := httptest.NewRecorder()
@@ -387,6 +389,25 @@ func TestTheRouterServesStateChangesOnTheStore(t *testing.T) {
 	}
 	if stored, _ := store.ReadAfter(0, 10); len(stored) != 1 || stored[0].Stream != "a" {
 		t.Errorf("stored %+v, want one event on stream a", stored)
+	}
+}
+
+func TestHealthzAnswersOnceListening(t *testing.T) {
+	inst := start(t, app.Config{DataDir: t.TempDir(), ShutdownTimeout: time.Second}, app.Slices{}, discard())
+	defer func() {
+		if err := inst.stop(t); err != nil {
+			t.Errorf("run: %v", err)
+		}
+	}()
+
+	resp, err := http.Get(inst.url + "/healthz")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
+		t.Errorf("got %d %q, want 200 \"ok\"", resp.StatusCode, body)
 	}
 }
 
