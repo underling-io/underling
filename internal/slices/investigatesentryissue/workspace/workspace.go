@@ -15,23 +15,23 @@ import (
 )
 
 const (
-	gitUserName    = "heinzel"
-	gitUserEmail   = "heinzel@users.noreply.github.com"
-	defaultDirName = "heinzel-investigations"
+	gitUserName    = "underling"
+	gitUserEmail   = "underling@users.noreply.github.com"
+	defaultDirName = "underling-investigations"
 
 	// cloneRefs is where the mirror keeps the clone's branches for
 	// inspection.
-	cloneRefs = "refs/heinzel/clone/"
+	cloneRefs = "refs/underling/clone/"
 )
 
 // Workspace is one run's dir and what is in it:
 //
-//   - Mirror, a bare clone of the GitHub repo. Only heinzel uses it, with
+//   - Mirror, a bare clone of the GitHub repo. Only underling uses it, with
 //     the token, to clone from and push from.
 //   - Clone, a clone of the mirror on the investigation branch, where
 //     Claude works. It holds neither the token nor a GitHub remote.
 //   - Home and ClaudeConfig, the child's HOME and CLAUDE_CONFIG_DIR.
-//   - GitHome, the HOME of heinzel's own git. The child can't touch it, so
+//   - GitHome, the HOME of underling's own git. The child can't touch it, so
 //     it can't plant git config (say url.<x>.insteadOf) that the push with
 //     the token would honour.
 //
@@ -67,7 +67,7 @@ func New(ctx context.Context, workDir, cloneURL, branch, path, token string) (_ 
 	if err := CheckDir(workDir); err != nil {
 		return nil, err
 	}
-	created, err := os.MkdirTemp(workDir, "heinzel-investigation-*")
+	created, err := os.MkdirTemp(workDir, "underling-investigation-*")
 	if err != nil {
 		return nil, fmt.Errorf("create run dir: %w", err)
 	}
@@ -153,7 +153,7 @@ func (ws *Workspace) cloneRepo(ctx context.Context, cloneURL string) error {
 
 // StrayBranches returns the clone's branches, other than the investigation
 // branch, holding commits that neither the mirror nor the investigation
-// branch has: work heinzel won't push. It also notes whether Claude
+// branch has: work underling won't push. It also notes whether Claude
 // renamed or deleted the investigation branch.
 func (ws *Workspace) StrayBranches(ctx context.Context) ([]string, error) {
 	if _, err := ws.git.local(ctx, ws.Mirror, "fetch", "--quiet", "--no-tags", ws.Clone, "+refs/heads/*:"+cloneRefs+"*"); err != nil {

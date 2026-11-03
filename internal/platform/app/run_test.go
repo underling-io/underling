@@ -16,9 +16,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"heinzel/internal/platform/app"
-	"heinzel/internal/platform/eventhandler"
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/platform/app"
+	"underling/internal/platform/eventhandler"
+	"underling/internal/platform/eventstore"
 )
 
 // waitLimit only guards against hangs; the tests never sleep.
@@ -417,8 +417,8 @@ func TestParseFlags(t *testing.T) {
 		t.Errorf("defaults: got %+v, %v; want %+v", got, err, want)
 	}
 
-	got, err = app.ParseFlags([]string{"-addr", "127.0.0.1:9000", "-data-dir", "/var/lib/heinzel", "-shutdown-timeout", "3s"}, io.Discard)
-	if want := (app.Config{Addr: "127.0.0.1:9000", DataDir: "/var/lib/heinzel", ShutdownTimeout: 3 * time.Second}); err != nil || got != want {
+	got, err = app.ParseFlags([]string{"-addr", "127.0.0.1:9000", "-data-dir", "/var/lib/underling", "-shutdown-timeout", "3s"}, io.Discard)
+	if want := (app.Config{Addr: "127.0.0.1:9000", DataDir: "/var/lib/underling", ShutdownTimeout: 3 * time.Second}); err != nil || got != want {
 		t.Errorf("overrides: got %+v, %v; want %+v", got, err, want)
 	}
 

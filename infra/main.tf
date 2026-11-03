@@ -1,8 +1,8 @@
 locals {
-  name                 = "heinzel"
-  log_group_name       = "/ecs/heinzel"
-  github_token_secret  = "heinzel/github-token"
-  sentry_client_secret = "heinzel/sentry-client-secret"
+  name                 = "underling"
+  log_group_name       = "/ecs/underling"
+  github_token_secret  = "underling/github-token"
+  sentry_client_secret = "underling/sentry-client-secret"
 
   # The container env beyond what the image sets (docs/event-model.md
   # § Container image). Null values are left out.

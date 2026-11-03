@@ -21,16 +21,16 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/systemtest/upstreamfix"
+	"underling/internal/systemtest/upstreamfix"
 )
 
-// The bug is upstreamfix's; heinzel gets the repo as it was at the fix's
+// The bug is upstreamfix's; underling gets the repo as it was at the fix's
 // parent.
 const (
 	sentrySecret = "system-test-sentry-secret"
 	sentryProj   = 7
 	issueID      = "6100000001"
-	branch       = "heinzel/sentry-" + issueID
+	branch       = "underling/sentry-" + issueID
 	prURL        = "https://github.com/hashicorp/go-version/pull/1"
 )
 
@@ -41,7 +41,7 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		t.Fatalf("claude is not on PATH: %v", err)
 	}
-	bin := buildHeinzel(t)
+	bin := buildUnderling(t)
 
 	upstream := upstreamfix.Clone(t)
 	remotes := t.TempDir()
@@ -65,9 +65,9 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 		"GITHUB_CLONE_URL":       remotes + "/",
 	}
 	maps.Copy(env, credentials)
-	heinzel := startHeinzel(t, bin, env)
+	underling := startUnderling(t, bin, env)
 
-	started := heinzel.waitFor(t, time.Now().Add(time.Minute), "app started", func(r map[string]any) bool {
+	started := underling.waitFor(t, time.Now().Add(time.Minute), "app started", func(r map[string]any) bool {
 		return r["msg"] == "app started"
 	})
 	addr, _ := started["addr"].(string)
@@ -79,7 +79,7 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 		IssueID: issueID,
 		Project: sentryProj,
 	})
-	finished := heinzel.waitFor(t, investigationDeadline(t), "investigation finished", func(r map[string]any) bool {
+	finished := underling.waitFor(t, investigationDeadline(t), "investigation finished", func(r map[string]any) bool {
 		return r["msg"] == "sentry issue investigation finished" && r["issueId"] == issueID
 	})
 	if finished["outcome"] != "pr_opened" {
@@ -96,7 +96,7 @@ func TestClaudeFixesARealUpstreamBug(t *testing.T) {
 }
 
 // requireCredentials fails unless the model credentials are set, and
-// returns the variables to forward to heinzel. With
+// returns the variables to forward to underling. With
 // CLAUDE_CODE_USE_BEDROCK=1 those are the Bedrock settings and whichever AWS
 // credential variables are set, and never the Anthropic or OpenAI keys;
 // otherwise the Claude credential and OPENAI_API_KEY.
@@ -117,7 +117,7 @@ func requireCredentials(t *testing.T) map[string]string {
 	return nil
 }
 
-// requireBedrock is requireCredentials in Bedrock mode. heinzel resolves the
+// requireBedrock is requireCredentials in Bedrock mode. underling resolves the
 // AWS credentials itself, through the SDK's default chain.
 func requireBedrock(t *testing.T) map[string]string {
 	t.Helper()
@@ -145,7 +145,7 @@ func requireBedrock(t *testing.T) map[string]string {
 }
 
 // requireToolsOutside fails unless each tool is on PATH outside home: the
-// sandboxed child may not read heinzel's HOME.
+// sandboxed child may not read underling's HOME.
 func requireToolsOutside(t *testing.T, home string, tools ...string) {
 	t.Helper()
 	resolvedHome, err := filepath.EvalSymlinks(home)
@@ -167,7 +167,7 @@ func requireToolsOutside(t *testing.T, home string, tools ...string) {
 }
 
 // copyPlugins copies the newest installed Codex and auto-task plugins out
-// of home, where heinzel won't take plugin dirs from, and returns the
+// of home, where underling won't take plugin dirs from, and returns the
 // copies.
 func copyPlugins(t *testing.T, home string) []string {
 	t.Helper()
@@ -221,35 +221,35 @@ func serveParentOfFix(t *testing.T, u upstreamfix.Upstream, remote string) {
 	upstreamfix.Git(t, remote, "fetch", "--quiet", "--no-tags", u.Dir, "refs/heads/system-test-base:refs/heads/main")
 }
 
-// buildHeinzel builds heinzel's command into a temp dir and returns the
+// buildUnderling builds underling's command into a temp dir and returns the
 // binary.
-func buildHeinzel(t *testing.T) string {
+func buildUnderling(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "heinzel")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/heinzel")
+	bin := filepath.Join(t.TempDir(), "underling")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/underling")
 	cmd.Dir = filepath.Join("..", "..") // the module root
 	cmd.Env = os.Environ()
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build heinzel: %v\n%s", err, out)
+		t.Fatalf("build underling: %v\n%s", err, out)
 	}
 	return bin
 }
 
-// heinzelProcess is heinzel running as a child process.
-type heinzelProcess struct {
+// underlingProcess is underling running as a child process.
+type underlingProcess struct {
 	logs   *logSink
 	exited chan struct{} // closed once Wait returns
 	err    error         // Wait's error, set before exited is closed
 }
 
-// startHeinzel runs bin on a free loopback port with a data dir of its
+// startUnderling runs bin on a free loopback port with a data dir of its
 // own and exactly env as its environment. Its stderr goes to the test's
 // stderr and into its logs. On cleanup it is stopped with SIGTERM and must
-// exit with status 0; register it after everything heinzel uses, so it
+// exit with status 0; register it after everything underling uses, so it
 // stops first.
-func startHeinzel(t *testing.T, bin string, env map[string]string) *heinzelProcess {
+func startUnderling(t *testing.T, bin string, env map[string]string) *underlingProcess {
 	t.Helper()
-	h := &heinzelProcess{logs: newLogSink(), exited: make(chan struct{})}
+	h := &underlingProcess{logs: newLogSink(), exited: make(chan struct{})}
 	cmd := exec.Command(bin, "-addr", "127.0.0.1:0", "-data-dir", t.TempDir())
 	cmd.Env = []string{}
 	for k, v := range env {
@@ -258,7 +258,7 @@ func startHeinzel(t *testing.T, bin string, env map[string]string) *heinzelProce
 	cmd.Stderr = h.logs
 	cmd.WaitDelay = 10 * time.Second
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start heinzel: %v", err)
+		t.Fatalf("start underling: %v", err)
 	}
 	go func() {
 		h.err = cmd.Wait()
@@ -269,27 +269,27 @@ func startHeinzel(t *testing.T, bin string, env map[string]string) *heinzelProce
 		case <-h.exited:
 		default:
 			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				t.Errorf("SIGTERM heinzel: %v", err)
+				t.Errorf("SIGTERM underling: %v", err)
 			}
 			select {
 			case <-h.exited:
 			case <-time.After(30 * time.Second): // beyond its 10s shutdown timeout
 				_ = cmd.Process.Kill()
 				<-h.exited
-				t.Error("heinzel did not stop within 30s of SIGTERM")
+				t.Error("underling did not stop within 30s of SIGTERM")
 				return
 			}
 		}
 		if h.err != nil {
-			t.Errorf("heinzel exited with %v, want status 0", h.err)
+			t.Errorf("underling exited with %v, want status 0", h.err)
 		}
 	})
 	return h
 }
 
-// waitFor returns heinzel's first log record matching match, failing at
-// deadline or as soon as heinzel exits without one.
-func (h *heinzelProcess) waitFor(t *testing.T, deadline time.Time, what string, match func(map[string]any) bool) map[string]any {
+// waitFor returns underling's first log record matching match, failing at
+// deadline or as soon as underling exits without one.
+func (h *underlingProcess) waitFor(t *testing.T, deadline time.Time, what string, match func(map[string]any) bool) map[string]any {
 	t.Helper()
 	timeout := time.NewTimer(time.Until(deadline))
 	defer timeout.Stop()
@@ -305,7 +305,7 @@ func (h *heinzelProcess) waitFor(t *testing.T, deadline time.Time, what string, 
 			if h.err != nil {
 				status = h.err.Error()
 			}
-			t.Fatalf("heinzel exited (%s) before logging %s", status, what)
+			t.Fatalf("underling exited (%s) before logging %s", status, what)
 		}
 		select {
 		case <-changed:
@@ -326,7 +326,7 @@ func investigationDeadline(t *testing.T) time.Time {
 	return time.Now().Add(44 * time.Minute)
 }
 
-// privateDir returns a new dir only this user may use, as heinzel requires
+// privateDir returns a new dir only this user may use, as underling requires
 // of its work dir.
 func privateDir(t *testing.T) string {
 	t.Helper()
@@ -367,10 +367,10 @@ func (g *fakeGitHub) recorded() []string {
 	return slices.Clone(g.requests)
 }
 
-// logSink is heinzel's stderr: it copies every byte to the test's stderr
+// logSink is underling's stderr: it copies every byte to the test's stderr
 // and collects the JSON log records, one per line, signalling each one.
 // Other lines, such as a panic trace, are only copied. It never fails a
-// write, so heinzel never blocks on its stderr.
+// write, so underling never blocks on its stderr.
 type logSink struct {
 	mu      sync.Mutex
 	partial []byte // the unfinished last line

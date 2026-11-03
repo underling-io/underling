@@ -5,8 +5,8 @@ import (
 	"errors"
 	"log/slog"
 
-	"heinzel/internal/events"
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/events"
+	"underling/internal/platform/eventstore"
 )
 
 // outcome is how an investigation (or a skip) ended: the event to record

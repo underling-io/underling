@@ -47,7 +47,7 @@ func Run(ctx context.Context, cmd Cmd, timeout time.Duration) (string, error) {
 	c.WaitDelay = waitDelay
 	killProcessGroupOnCancel(c)
 
-	// heinzel makes the pipes itself and hands the child its ends, so Wait
+	// underling makes the pipes itself and hands the child its ends, so Wait
 	// returns as soon as the child exits, even while a tool it left behind
 	// still holds them.
 	p, err := newPipes()
@@ -85,7 +85,7 @@ func Run(ctx context.Context, cmd Cmd, timeout time.Duration) (string, error) {
 
 	switch {
 	case ctx.Err() != nil:
-		return "", errors.New("heinzel shut down while claude was running")
+		return "", errors.New("underling shut down while claude was running")
 	case errors.Is(runCtx.Err(), context.DeadlineExceeded):
 		return "", &TimeoutError{After: timeout}
 	case waitErr != nil:

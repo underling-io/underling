@@ -14,8 +14,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"heinzel/internal/platform/app"
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/platform/app"
+	"underling/internal/platform/eventstore"
 )
 
 const secretEnvVar = "SENTRY_CLIENT_SECRET"

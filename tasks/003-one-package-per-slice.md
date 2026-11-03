@@ -16,7 +16,7 @@ Task 002 put both Sentry slices into one feature package, `internal/features/sen
 - **Slice 1 (state change), `internal/slices/recordsentryissuealert/`:** `POST /sentry/callback` → command "Record Sentry issue alert" → `SentryIssueAlertReceived`. The package also owns `SENTRY_CLIENT_SECRET` loading. Its behaviour (status codes, signature check, size cap, validation, dedupe, persisted payload and stream ids) is unchanged. It registers no event handlers.
 - **Slice 2 (automation), `internal/slices/handlesentryissuealert/`:** handles `SentryIssueAlertReceived`. It registers no routes. For now its reaction is still the single structured log line from task 002, a placeholder until the real reaction is defined. The handler name `sentry-issue-alert-logger` is kept unchanged because it's the persisted checkpoint key.
 - The two slices don't import each other. They share only the `internal/events` contract. The import-guard test (moved to `internal/slices/`) still enforces the allowlist and forbids importing any other slice. It fails if no slice packages exist.
-- `cmd/heinzel/main.go` wires both slices separately into `agent.Run`. Startup behaviour (exit 2 without the secret, `-h` → 0) is unchanged.
+- `cmd/underling/main.go` wires both slices separately into `agent.Run`. Startup behaviour (exit 2 without the secret, `-h` → 0) is unchanged.
 - `docs/event-model.md` describes slices, one package each, with "adding a slice" guidance. It documents the two Sentry slices as independent slices linked by the event, and the automation's reaction as a TBD placeholder.
 - `make check` passes. Existing behaviour tests move with their code and keep passing.
 
@@ -43,8 +43,8 @@ This is a mechanical rename plus a split. `internal/features/` becomes `internal
    - The moved test currently depends on things from `callback_test.go`, such as the `secret` const. Drop those dependencies.
    - Have the test obtain its handler through `New(logger)(nil, nil)`. A nil mux panics if the slice ever registers a route, so this proves "registers no routes".
 4. **Delete `internal/features/sentry/sentry.go`.** Its combining constructor is the grouping this task removes. Neither slice imports the other. They share only `internal/events`.
-5. **Move the import guard to `internal/slices/`.** Move `doc.go` and `imports_test.go`. Rename the package, identifiers, messages and test name from feature to slice, and point the path constant at `heinzel/internal/slices`. The allowlist and the per-directory "own package only" rule already forbid importing a sibling slice, and the zero-packages failure stays. Check by hand: add an import of `recordsentryissuealert` to a `handlesentryissuealert` file, confirm the guard fails, then revert. `TestEventsPackageHoldsOnlyContracts`'s `../events` path still resolves from the new location.
-6. **Wire `cmd/heinzel/main.go`.** Load the secret with `recordsentryissuealert.SecretFromEnv`, in the same place and with the same exit 2. Then pass `[]agent.Slice{recordsentryissuealert.New(secret, logger), handlesentryissuealert.New(logger)}` to `agent.Run`. `-h` still exits 0 before the secret is read.
+5. **Move the import guard to `internal/slices/`.** Move `doc.go` and `imports_test.go`. Rename the package, identifiers, messages and test name from feature to slice, and point the path constant at `underling/internal/slices`. The allowlist and the per-directory "own package only" rule already forbid importing a sibling slice, and the zero-packages failure stays. Check by hand: add an import of `recordsentryissuealert` to a `handlesentryissuealert` file, confirm the guard fails, then revert. `TestEventsPackageHoldsOnlyContracts`'s `../events` path still resolves from the new location.
+6. **Wire `cmd/underling/main.go`.** Load the secret with `recordsentryissuealert.SecretFromEnv`, in the same place and with the same exit 2. Then pass `[]agent.Slice{recordsentryissuealert.New(secret, logger), handlesentryissuealert.New(logger)}` to `agent.Run`. `-h` still exits 0 before the secret is read.
 7. **Update the `internal/events` doc comment** to say "shared between slices".
 8. **Rewrite `docs/event-model.md`.**
    - The intro says each slice is one package under `internal/slices/<slice>/`, and slices are coupled only through events.
@@ -66,10 +66,10 @@ This is a mechanical rename plus a split. `internal/features/` becomes `internal
 - The guard's error message now says "their own package" (singular) to match the one-package-per-slice rule. Its logic is unchanged. Subpackages of a slice are still allowed.
 - New test `TestSliceRunsNoEventHandlers` in `recordsentryissuealert` asserts that the slice returns zero handlers. The handler test gets its handler through `New(logger)(nil, nil)`, so a route registration would panic on the nil mux.
 - I changed one comment: the callback comment now names the command "Record Sentry issue alert" instead of "Record issue alert". No code paths, response bodies, stream ids, payloads or the handler name changed.
-- Hand-check from step 5: I added `_ "heinzel/internal/slices/recordsentryissuealert"` to `handlesentryissuealert.go`. `TestSlicesImportOnlyStdlibSharedEventsAndInfrastructure` failed with the expected message. I reverted the import before committing.
+- Hand-check from step 5: I added `_ "underling/internal/slices/recordsentryissuealert"` to `handlesentryissuealert.go`. `TestSlicesImportOnlyStdlibSharedEventsAndInfrastructure` failed with the expected message. I reverted the import before committing.
 - Checked startup by hand with a built binary: without `SENTRY_CLIENT_SECRET` it exits 2, and `-h` exits 0.
 - Final sweep: `grep -rni feature --include='*.go' .` and `grep -rni feature docs/` both return nothing.
 - **Follow-ups from review.**
-  - `cmd/heinzel` has no tests, so nothing automatically checks that both slices are wired. This gap predates the task.
+  - `cmd/underling` has no tests, so nothing automatically checks that both slices are wired. This gap predates the task.
   - Once the real automation reaction is defined, rename `alertLogger` and `logger.go`. The handler name `sentry-issue-alert-logger` must stay, because it's the checkpoint key.
   - The import guard deliberately allows a slice to have subpackages for its own internals.

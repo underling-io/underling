@@ -245,7 +245,7 @@ func TestRunKillsClaudeOnShutdown(t *testing.T) {
 	_, err := runWithin(t, ctx, cmd, time.Hour)
 
 	var timeout *TimeoutError
-	if err == nil || err.Error() != "heinzel shut down while claude was running" || errors.As(err, &timeout) {
+	if err == nil || err.Error() != "underling shut down while claude was running" || errors.As(err, &timeout) {
 		t.Fatalf("got %v, want a shutdown error", err)
 	}
 }

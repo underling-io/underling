@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"heinzel/internal/events"
+	"underling/internal/events"
 )
 
 func TestPromptCapsTheTitle(t *testing.T) {
@@ -30,13 +30,13 @@ func TestPromptStartsAutoTaskAndCarriesIssueDetailsAsData(t *testing.T) {
 		Frames:         []events.SentryStackFrame{{File: "app.js", Function: "handler", Line: 7}},
 	}
 
-	got := investigationPrompt(alert, "heinzel/sentry-42")
+	got := investigationPrompt(alert, "underling/sentry-42")
 
 	if !strings.HasPrefix(got, "/at:auto-task ") {
 		t.Errorf("prompt does not start with /at:auto-task: %q", got)
 	}
 	for _, want := range []string{
-		"heinzel/sentry-42",
+		"underling/sentry-42",
 		"Commit",
 		"Do not push",
 		"/at:ship-task",
@@ -55,13 +55,13 @@ func TestPromptStartsAutoTaskAndCarriesIssueDetailsAsData(t *testing.T) {
 }
 
 func TestPromptOverridesAutoTasksWorktreeBranchAndShipSteps(t *testing.T) {
-	got := investigationPrompt(events.SentryIssueAlertReceived{IssueID: "42"}, "heinzel/sentry-42")
+	got := investigationPrompt(events.SentryIssueAlertReceived{IssueID: "42"}, "underling/sentry-42")
 
 	for _, want := range []string{
 		"Run every /at:auto-task step in place, in the current directory",
 		"Do not create a git worktree",
 		"do not create, switch or rename branches",
-		"commit only on branch heinzel/sentry-42",
+		"commit only on branch underling/sentry-42",
 		"Skip auto-task's ship and hand-off steps",
 	} {
 		if !strings.Contains(got, want) {

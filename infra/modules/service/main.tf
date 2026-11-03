@@ -16,7 +16,7 @@ resource "aws_ecs_task_definition" "this" {
     size_in_gib = var.ephemeral_storage_gib
   }
 
-  # The image's CMD runs heinzel on :8080. No container healthCheck: the
+  # The image's CMD runs underling on :8080. No container healthCheck: the
   # ALB's /healthz check is the one that counts.
   container_definitions = jsonencode([
     {

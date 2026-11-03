@@ -15,7 +15,7 @@ import (
 	esbbolt "github.com/hallgren/eventsourcing/eventstore/bbolt"
 	bolt "go.etcd.io/bbolt"
 
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/platform/eventstore"
 )
 
 func openStore(t *testing.T, dir string, opts ...eventstore.Option) *eventstore.Store {
@@ -177,7 +177,7 @@ func TestOnDiskLayout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	want := core.Event{AggregateID: "a", AggregateType: "heinzel", Version: 1, GlobalVersion: 1, Reason: "NoteRegistered", Timestamp: clock, Data: []byte(`{"text":"hi"}`)}
+	want := core.Event{AggregateID: "a", AggregateType: "underling", Version: 1, GlobalVersion: 1, Reason: "NoteRegistered", Timestamp: clock, Data: []byte(`{"text":"hi"}`)}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
@@ -198,10 +198,10 @@ func TestOnDiskLayout(t *testing.T) {
 	}
 }
 
-func TestAnOldHeinzelDBIsLeftUntouched(t *testing.T) {
+func TestAnOldUnderlingDBIsLeftUntouched(t *testing.T) {
 	dir := t.TempDir()
 	junk := []byte("not a bbolt file")
-	old := filepath.Join(dir, "heinzel.db")
+	old := filepath.Join(dir, "underling.db")
 	if err := os.WriteFile(old, junk, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestAnOldHeinzelDBIsLeftUntouched(t *testing.T) {
 	appendOK(t, s, "a", 0, note("hi"))
 
 	if got, err := os.ReadFile(old); err != nil || !bytes.Equal(got, junk) {
-		t.Fatalf("heinzel.db is now %q (error %v), want it untouched", got, err)
+		t.Fatalf("underling.db is now %q (error %v), want it untouched", got, err)
 	}
 }
 

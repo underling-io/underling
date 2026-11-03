@@ -13,10 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	"heinzel/internal/events"
-	"heinzel/internal/platform/app"
-	"heinzel/internal/platform/eventstore"
-	"heinzel/internal/slices/recordsentryissuealert"
+	"underling/internal/events"
+	"underling/internal/platform/app"
+	"underling/internal/platform/eventstore"
+	"underling/internal/slices/recordsentryissuealert"
 )
 
 const secret = "test-client-secret"

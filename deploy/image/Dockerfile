@@ -1,4 +1,4 @@
-# heinzel in Bedrock mode with its host prerequisites (docs/event-model.md
+# underling in Bedrock mode with its host prerequisites (docs/event-model.md
 # § Container image). Built by `make image` from the context `make
 # image-context` stages in bin/image; this file is the one place versions
 # are pinned.
@@ -48,12 +48,12 @@ RUN curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-arm64.
 
 RUN test "$(bwrap --version)" = "bubblewrap ${BWRAP_VERSION}" && socat -V >/dev/null
 
-RUN groupadd -g 10001 heinzel \
-	&& useradd -u 10001 -g 10001 -m -d /home/heinzel -s /bin/sh heinzel \
-	&& install -d -o root -g root -m 0755 /var/lib/heinzel \
-	&& install -d -o heinzel -g heinzel -m 0700 /var/lib/heinzel/data /var/lib/heinzel/work
+RUN groupadd -g 10001 underling \
+	&& useradd -u 10001 -g 10001 -m -d /home/underling -s /bin/sh underling \
+	&& install -d -o root -g root -m 0755 /var/lib/underling \
+	&& install -d -o underling -g underling -m 0700 /var/lib/underling/data /var/lib/underling/work
 
-COPY --chmod=0755 heinzel heinzel-sandbox-probe /usr/local/bin/
+COPY --chmod=0755 underling underling-sandbox-probe /usr/local/bin/
 
 # Required, no default: make image-context records them from the staged
 # plugin dirs.
@@ -62,26 +62,26 @@ ARG AT_PLUGIN_VERSION
 RUN test -n "${CODEX_PLUGIN_VERSION}" && test -n "${AT_PLUGIN_VERSION}" \
 	|| { echo "CODEX_PLUGIN_VERSION and AT_PLUGIN_VERSION must be set" >&2; exit 1; }
 # make image-context stages them world-readable; COPY keeps those modes.
-COPY plugins/ /opt/heinzel/plugins/
+COPY plugins/ /opt/underling/plugins/
 
-LABEL heinzel.claude="${CLAUDE_VERSION}" \
-	heinzel.codex="${CODEX_VERSION}" \
-	heinzel.go="${GO_VERSION}" \
-	heinzel.bwrap="${BWRAP_VERSION}" \
-	heinzel.plugins.codex="${CODEX_PLUGIN_VERSION}" \
-	heinzel.plugins.at="${AT_PLUGIN_VERSION}"
+LABEL underling.claude="${CLAUDE_VERSION}" \
+	underling.codex="${CODEX_VERSION}" \
+	underling.go="${GO_VERSION}" \
+	underling.bwrap="${BWRAP_VERSION}" \
+	underling.plugins.codex="${CODEX_PLUGIN_VERSION}" \
+	underling.plugins.at="${AT_PLUGIN_VERSION}"
 
-ENV HOME=/home/heinzel \
+ENV HOME=/home/underling \
 	PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-	INVESTIGATION_WORK_DIR=/var/lib/heinzel/work \
-	INVESTIGATION_DENY_READ=/var/lib/heinzel/data \
-	CLAUDE_PLUGIN_DIRS=/opt/heinzel/plugins/codex,/opt/heinzel/plugins/at \
+	INVESTIGATION_WORK_DIR=/var/lib/underling/work \
+	INVESTIGATION_DENY_READ=/var/lib/underling/data \
+	CLAUDE_PLUGIN_DIRS=/opt/underling/plugins/codex,/opt/underling/plugins/at \
 	CLAUDE_CODE_USE_BEDROCK=1 \
 	GOTOOLCHAIN=local
 
-USER heinzel
-WORKDIR /home/heinzel
+USER underling
+WORKDIR /home/underling
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
 	CMD curl -fsS http://127.0.0.1:8080/healthz
-CMD ["heinzel", "-addr", ":8080", "-data-dir", "/var/lib/heinzel/data"]
+CMD ["underling", "-addr", ":8080", "-data-dir", "/var/lib/underling/data"]

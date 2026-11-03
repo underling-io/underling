@@ -36,7 +36,7 @@ func client(api *fakeAPI) *Client {
 func TestOpenDraftPRPostsADraftAndReturnsItsURL(t *testing.T) {
 	api := &fakeAPI{status: http.StatusCreated, body: `{"number":7,"html_url":"https://github.com/acme/web/pull/7"}`}
 
-	url, err := client(api).OpenDraftPR(context.Background(), "acme", "web", PullRequest{Title: "Fix", Head: "heinzel/sentry-1", Base: "main", Body: "body"})
+	url, err := client(api).OpenDraftPR(context.Background(), "acme", "web", PullRequest{Title: "Fix", Head: "underling/sentry-1", Base: "main", Body: "body"})
 
 	if err != nil || url != "https://github.com/acme/web/pull/7" {
 		t.Fatalf("got (%q, %v), want the PR URL", url, err)
@@ -58,7 +58,7 @@ func TestOpenDraftPRPostsADraftAndReturnsItsURL(t *testing.T) {
 	if err := json.Unmarshal(api.sent, &sent); err != nil {
 		t.Fatalf("decode %s: %v", api.sent, err)
 	}
-	if want := (PullRequest{Title: "Fix", Head: "heinzel/sentry-1", Base: "main", Body: "body", Draft: true}); sent != want {
+	if want := (PullRequest{Title: "Fix", Head: "underling/sentry-1", Base: "main", Body: "body", Draft: true}); sent != want {
 		t.Errorf("sent %+v, want %+v", sent, want)
 	}
 }

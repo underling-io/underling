@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/platform/eventstore"
 )
 
 // Event is an event contract. EventType is the type it is stored under.

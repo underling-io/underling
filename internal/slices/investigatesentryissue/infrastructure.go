@@ -6,9 +6,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
-	"heinzel/internal/slices/investigatesentryissue/claude"
-	"heinzel/internal/slices/investigatesentryissue/github"
-	"heinzel/internal/slices/investigatesentryissue/workspace"
+	"underling/internal/slices/investigatesentryissue/claude"
+	"underling/internal/slices/investigatesentryissue/github"
+	"underling/internal/slices/investigatesentryissue/workspace"
 )
 
 // workspaceCloner gives each investigation a workspace of its own, where

@@ -1,6 +1,6 @@
 // Package upstreamfix is the real upstream bug both system tests replay:
 // Version.Core in hashicorp/go-version panics on a zero-value Version. Fix
-// fixed it and added RegressionTest; heinzel gets the repo as it was at
+// fixed it and added RegressionTest; underling gets the repo as it was at
 // Fix's parent. The package holds the helpers both tests share: the
 // upstream clone, the alert, the precondition, the verdict and the
 // comparison. It needs git and go on PATH, and network to clone URL.
@@ -48,7 +48,7 @@ func Clone(t testing.TB) Upstream {
 }
 
 // RequireBugReproduces fails the test unless RegressionTest runs and fails
-// in dir, a checkout of what heinzel is given. It overwrites dir's
+// in dir, a checkout of what underling is given. It overwrites dir's
 // version_test.go with Fix's.
 func RequireBugReproduces(t testing.TB, dir string, u Upstream) {
 	t.Helper()

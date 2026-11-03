@@ -13,7 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
-	"heinzel/internal/events"
+	"underling/internal/events"
 )
 
 // The Bedrock tests run the slice end to end in Bedrock mode, with a fake
@@ -301,6 +301,6 @@ func TestBedrockModeResolvesCredentialsThroughTheDefaultChain(t *testing.T) {
 	}
 	env, _ := childEnv(t, calls[0])
 	if env["AWS_ACCESS_KEY_ID"] != "AKIAENV" || env["AWS_SECRET_ACCESS_KEY"] != "env-secret" || env["AWS_SESSION_TOKEN"] != "env-session" {
-		t.Errorf("child env = %v, want heinzel's env credentials", env)
+		t.Errorf("child env = %v, want underling's env credentials", env)
 	}
 }

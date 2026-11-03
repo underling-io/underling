@@ -2,7 +2,7 @@
 # module.service. 016.04 and README.md rely on these names.
 
 output "base_url" {
-  description = "Public base URL of heinzel."
+  description = "Public base URL of underling."
   value       = "https://${var.domain_name}"
 }
 
@@ -17,7 +17,7 @@ output "ecr_repository_url" {
 }
 
 output "log_group_name" {
-  description = "CloudWatch log group of the service (stream prefix heinzel/) and the probe (probe/)."
+  description = "CloudWatch log group of the service (stream prefix underling/) and the probe (probe/)."
   value       = module.base.log_group_name
 }
 
@@ -42,12 +42,12 @@ output "service_name" {
 }
 
 output "task_role_arn" {
-  description = "IAM role the heinzel task runs as (Bedrock access)."
+  description = "IAM role the underling task runs as (Bedrock access)."
   value       = module.base.task_role_arn
 }
 
 output "probe_task_definition_arn" {
-  description = "Task definition that runs heinzel-sandbox-probe as a one-off Fargate task."
+  description = "Task definition that runs underling-sandbox-probe as a one-off Fargate task."
   value       = module.base.probe_task_definition_arn
 }
 
@@ -57,7 +57,7 @@ output "public_subnet_ids" {
 }
 
 output "task_security_group_id" {
-  description = "Security group of the heinzel tasks."
+  description = "Security group of the underling tasks."
   value       = module.base.task_security_group_id
 }
 

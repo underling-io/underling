@@ -22,7 +22,7 @@ import (
 	"strings"
 )
 
-const slicesPath = "heinzel/internal/slices"
+const slicesPath = "underling/internal/slices"
 
 func main() {
 	out := flag.String("o", "slices_gen.go", "output file")

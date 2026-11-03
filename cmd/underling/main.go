@@ -1,4 +1,4 @@
-// Command heinzel runs the event-sourced app.
+// Command underling runs the event-sourced app.
 package main
 
 import (
@@ -11,8 +11,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"heinzel/internal/platform/app"
-	_ "heinzel/internal/slices" // registers every slice with the app
+	"underling/internal/platform/app"
+	_ "underling/internal/slices" // registers every slice with the app
 )
 
 func main() {

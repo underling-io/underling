@@ -31,7 +31,7 @@ resource "aws_acm_certificate_validation" "this" {
 
 resource "aws_security_group" "alb" {
   name        = "${var.name}-alb"
-  description = "heinzel ALB"
+  description = "underling ALB"
   vpc_id      = var.vpc_id
 
   tags = {
@@ -59,7 +59,7 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
 
 resource "aws_vpc_security_group_egress_rule" "alb_to_task" {
   security_group_id            = aws_security_group.alb.id
-  description                  = "To the heinzel tasks"
+  description                  = "To the underling tasks"
   ip_protocol                  = "tcp"
   from_port                    = 8080
   to_port                      = 8080

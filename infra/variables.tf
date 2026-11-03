@@ -13,7 +13,7 @@ variable "aws_region" {
 }
 
 variable "domain_name" {
-  description = "Fully qualified domain the ALB serves, e.g. heinzel.example.com. It must lie in hosted_zone_id."
+  description = "Fully qualified domain the ALB serves, e.g. underling.example.com. It must lie in hosted_zone_id."
   type        = string
 
   validation {
@@ -33,7 +33,7 @@ variable "hosted_zone_id" {
 }
 
 variable "image_tag" {
-  description = "Tag of the heinzel image in the ECR repository, as pushed by make image-push. Tags are immutable."
+  description = "Tag of the underling image in the ECR repository, as pushed by make image-push. Tags are immutable."
   type        = string
 
   validation {

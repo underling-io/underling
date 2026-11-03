@@ -65,7 +65,7 @@ mock_provider "aws" {
 
   mock_resource "aws_ecs_cluster" {
     defaults = {
-      arn = "arn:aws:ecs:eu-central-1:123456789012:cluster/heinzel"
+      arn = "arn:aws:ecs:eu-central-1:123456789012:cluster/underling"
     }
   }
 
@@ -77,26 +77,26 @@ mock_provider "aws" {
 
   mock_resource "aws_lb" {
     defaults = {
-      arn = "arn:aws:elasticloadbalancing:eu-central-1:123456789012:loadbalancer/app/heinzel/mock"
+      arn = "arn:aws:elasticloadbalancing:eu-central-1:123456789012:loadbalancer/app/underling/mock"
     }
   }
 
   mock_resource "aws_lb_target_group" {
     defaults = {
-      arn = "arn:aws:elasticloadbalancing:eu-central-1:123456789012:targetgroup/heinzel/mock"
+      arn = "arn:aws:elasticloadbalancing:eu-central-1:123456789012:targetgroup/underling/mock"
     }
   }
 
   mock_resource "aws_lb_listener" {
     defaults = {
-      arn = "arn:aws:elasticloadbalancing:eu-central-1:123456789012:listener/app/heinzel/mock/mock"
+      arn = "arn:aws:elasticloadbalancing:eu-central-1:123456789012:listener/app/underling/mock/mock"
     }
   }
 }
 
 variables {
   aws_region          = "eu-central-1"
-  domain_name         = "heinzel.example.com"
+  domain_name         = "underling.example.com"
   hosted_zone_id      = "Z0123456789ABCDEFGHIJ"
   image_tag           = "0123456789ab"
   sentry_github_repos = "1=acme/app"
@@ -118,7 +118,7 @@ run "null_optionals_are_left_out_of_the_env" {
   }
 
   assert {
-    condition     = output.webhook_url == "https://heinzel.example.com/sentry/callback"
+    condition     = output.webhook_url == "https://underling.example.com/sentry/callback"
     error_message = "webhook_url: ${output.webhook_url}"
   }
 }

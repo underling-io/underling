@@ -1,17 +1,17 @@
 ---
-title: Rewrite heinzel in Rust
+title: Rewrite underling in Rust
 date: 2026-10-25
 status: rejected
 type: tech
 ---
 
-## Rewrite heinzel in Rust
+## Rewrite underling in Rust
 
-Rewrite heinzel in idiomatic Rust, with the same behaviour as the Go version: HTTP API, event contracts, config, logs, slice architecture and safety properties. The Rust crate grows next to the Go code until it reaches parity. The last sub-task then deletes the Go code.
+Rewrite underling in idiomatic Rust, with the same behaviour as the Go version: HTTP API, event contracts, config, logs, slice architecture and safety properties. The Rust crate grows next to the Go code until it reaches parity. The last sub-task then deletes the Go code.
 
 ## Locked Decisions
 
-- **Layout.** One Cargo package `heinzel` (lib + bin) at the repo root (`Cargo.toml`, `src/`, `tests/`), next to the Go tree until cutover. `target/` is gitignored.
+- **Layout.** One Cargo package `underling` (lib + bin) at the repo root (`Cargo.toml`, `src/`, `tests/`), next to the Go tree until cutover. `target/` is gitignored.
 - **Crates.** Mainstream picks, no hand-rolling:
   - `tokio` for async, `tokio-util` for its `CancellationToken`;
   - `axum` for HTTP, `reqwest` with rustls for the GitHub API;

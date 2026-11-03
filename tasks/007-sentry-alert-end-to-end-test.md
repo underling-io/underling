@@ -25,7 +25,7 @@ Add an in-process integration test that sends a signed Sentry issue-alert webhoo
 
 ### Steps
 
-1. **Location:** put a new test file in `internal/slices`, in package `slices_test`. It imports `heinzel/internal/slices` (blank import) so every slice registers, exactly as `main` gets them. It must not import any individual slice package, so it keeps working as slices are added.
+1. **Location:** put a new test file in `internal/slices`, in package `slices_test`. It imports `underling/internal/slices` (blank import) so every slice registers, exactly as `main` gets them. It must not import any individual slice package, so it keeps working as slices are added.
 2. **In-memory listener (test helper in that file):** a `net.Listener` backed by `net.Pipe`. `Accept` returns server-side conns from a channel. `Close` is idempotent and unblocks `Accept` with `net.ErrClosed`, because `http.Server.Serve` treats that as a normal stop on shutdown. `Addr` returns any fixed address. The `http.Client` gets a `Transport` whose `DialContext` hands the client end of a new pipe to the listener (and fails once it's closed). Disable keep-alives on that transport, so no idle conn holds up shutdown.
 3. **Run the agent:**
    - Call `agent.Build` with a `Getenv` that serves `SENTRY_CLIENT_SECRET` from a test map, and a JSON `slog` logger writing to a goroutine-safe sink.

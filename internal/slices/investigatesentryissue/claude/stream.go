@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-// streamEvent is the part of a stream-json event heinzel reads.
+// streamEvent is the part of a stream-json event underling reads.
 type streamEvent struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype"`
@@ -20,7 +20,7 @@ type streamEvent struct {
 	Result  string `json:"result"`
 }
 
-// initEvent is the part of the system/init event heinzel checks. Field
+// initEvent is the part of the system/init event underling checks. Field
 // names follow the Agent SDK's SDKSystemMessage, which stream-json emits.
 type initEvent struct {
 	PermissionMode string       `json:"permissionMode"`
@@ -34,7 +34,7 @@ type initPlugin struct {
 	Path string `json:"path"`
 }
 
-// streamOutput is what heinzel takes from claude's output.
+// streamOutput is what underling takes from claude's output.
 type streamOutput struct {
 	init    *initEvent // the first system/init event, if any
 	summary string     // the last event's result text

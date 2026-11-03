@@ -1,8 +1,8 @@
-// Package postdeploy is a system test against a deployed heinzel: it posts
+// Package postdeploy is a system test against a deployed underling: it posts
 // a signed Sentry alert for go-version's real panic to the public webhook
-// and checks, in a real GitHub repo, that heinzel opened a draft PR that
+// and checks, in a real GitHub repo, that underling opened a draft PR that
 // fixes it. Before that it force-pushes the named throwaway repo's default
-// branch, deletes its heinzel/* branches and closes their PRs.
+// branch, deletes its underling/* branches and closes their PRs.
 //
 // The test is behind the postdeploy build tag, run by make postdeploy-test
 // (see infra/README.md § Post-deploy system test). It costs Bedrock tokens

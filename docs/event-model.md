@@ -1,6 +1,6 @@
 # Event Model
 
-heinzel is organised as vertical slices, event-modeling style. A slice is
+underling is organised as vertical slices, event-modeling style. A slice is
 either a **state change** (trigger → command → event) or an **automation**
 (event → reaction). A state change is an `app.StateChange` (one HTTP route,
 served with [Gin](https://github.com/gin-gonic/gin)); an automation is an
@@ -11,33 +11,33 @@ Slices never import each other; they are coupled only through the events in
 `internal/platform/`: `app` (slice registration, the router, the
 lifecycle), `eventstore` and `eventhandler`.
 
-heinzel is a single static binary (pure Go, no cgo). It needs nothing but
+underling is a single static binary (pure Go, no cgo). It needs nothing but
 a data dir (`-data-dir`, default `./data`) and the slices' environment
 variables. Other flags: `-addr` (default `:8080`) and `-shutdown-timeout`
 (default `10s`). Invalid arguments or configuration exit with status 2, a
 runtime error with 1.
 
 Besides the slices' routes, the `app` router serves one platform route:
-`GET /healthz` answers 200 with body `ok` once heinzel is listening. It has
+`GET /healthz` answers 200 with body `ok` once underling is listening. It has
 no auth, writes no event and doesn't touch the store; another method on it
 gets 405. The [container image](#container-image)'s health check uses it.
 
 ## Event store
 
 The event store is embedded: [hallgren/eventsourcing](https://github.com/hallgren/eventsourcing)'s
-bbolt event store, plus heinzel's own checkpoints. The data dir holds two
+bbolt event store, plus underling's own checkpoints. The data dir holds two
 files:
 
 - `events.db`, in hallgren's bbolt format. Each stream is one hallgren
-  aggregate: `AggregateType` is always `heinzel`, `AggregateID` is the
+  aggregate: `AggregateType` is always `underling`, `AggregateID` is the
   stream, `Version` the event's version in the stream, `Reason` the event
   type, `Data` the JSON payload as-is and `GlobalVersion` the global
   position. Timestamps are UTC with nanoseconds.
 - `checkpoints.db`, a bbolt file with one bucket, `checkpoints`: handler
   name → the last position it processed, 8-byte big-endian.
 
-Both files are opened with a one-second lock timeout, so a second heinzel
-on the same data dir fails at startup. A `heinzel.db` from before this
+Both files are opened with a one-second lock timeout, so a second underling
+on the same data dir fails at startup. A `underling.db` from before this
 store (the earlier hand-rolled layout) is never opened or migrated.
 
 `eventstore.Store` is what slices see:
@@ -55,11 +55,11 @@ after the handler's checkpoint, reads in batches, and checkpoints after
 each event. Delivery is at least once (a crash between `Handle` and the
 checkpoint repeats the event), so handlers make their appends idempotent
 with expected versions. Stopping lets the current `Handle` finish and
-leaves later events for the next start. heinzel doesn't use hallgren's
+leaves later events for the next start. underling doesn't use hallgren's
 projections, which keep positions in memory, poll, and hold a read
 transaction across callbacks.
 
-On shutdown heinzel drains HTTP requests (closing them after
+On shutdown underling drains HTTP requests (closing them after
 `-shutdown-timeout`), cancels the automations' context, stops the event
 handlers and closes the store, in that order.
 
@@ -142,26 +142,26 @@ other event types, and logs and skips a payload it cannot decode. For each
 alert, in order:
 
 1. **Stale.** An alert stored more than `INVESTIGATION_MAX_AGE` before the
-   handler started (when heinzel built it at startup) is recorded as Skipped
+   handler started (when underling built it at startup) is recorded as Skipped
    `stale`. The first deploy therefore doesn't investigate past alerts, while
    an alert stored after startup is never stale, however long a backlog of
    runs delays it.
 2. **Unmapped.** An alert whose Sentry project id isn't in
    `SENTRY_GITHUB_REPOS` is recorded as Skipped `unmapped`.
 3. **Started.** Otherwise Started is recorded with the repo and the branch
-   `heinzel/sentry-<issueId>`.
-4. **Clone.** heinzel makes a fresh run dir under `INVESTIGATION_WORK_DIR`,
+   `underling/sentry-<issueId>`.
+4. **Clone.** underling makes a fresh run dir under `INVESTIGATION_WORK_DIR`,
    bare-clones the repo into it as a mirror, and clones the mirror (without
    hard links) into a work clone on the new branch, from the default branch.
-   The work clone has a local git identity (`heinzel`) so Claude can commit.
+   The work clone has a local git identity (`underling`) so Claude can commit.
    Clone, fetch and push time out after 10 minutes, every other git command
    after 1 minute, and transfers to GitHub abort below 1000 bytes/s for 60
    seconds. A timed-out command's output is read for at most 10 more
    seconds, so a helper it left holding the pipes (say `git-remote-https`)
    can't hold the run up.
-5. **Claude.** In [Bedrock mode](#bedrock-mode), heinzel first gets the
+5. **Claude.** In [Bedrock mode](#bedrock-mode), underling first gets the
    run's AWS credentials and writes the child's Codex config; either
-   failing fails the run as stage `claude` before the child starts. heinzel
+   failing fails the run as stage `claude` before the child starts. underling
    then runs `claude` in the work clone (see
    [Isolation](#isolation)) with the prompt on stdin. The run succeeds when
    the child exits 0, its `system/init` event shows the session started as
@@ -169,22 +169,22 @@ alert, in order:
    `CLAUDE_PLUGIN_DIRS` entry, no `plugin_errors`), and its last stream-json
    event is a `result` with `is_error: false`; that event's `result` text is
    Claude's summary. It is killed (with its process group) after
-   `INVESTIGATION_TIMEOUT`, or when heinzel shuts down. When it exits,
+   `INVESTIGATION_TIMEOUT`, or when underling shuts down. When it exits,
    whatever it left running in its process group is killed too.
-6. **Commits.** heinzel fetches all of the work clone's branches into the
+6. **Commits.** underling fetches all of the work clone's branches into the
    mirror. If a branch other than the investigation branch holds commits
    that neither the mirror nor the investigation branch has (say auto-task
    made its own branch and never merged it back, or Claude renamed the
    investigation branch), the run fails as stage `claude` and names those
-   branches. Otherwise heinzel counts the branch's commits on top of the
+   branches. Otherwise underling counts the branch's commits on top of the
    default branch. None, or an investigation branch Claude deleted, means
    NoChanges.
 7. **CI check.** If the branch changes CI configuration (anything under
    `.github/`, `.circleci/` or `.buildkite/`, or `.gitlab-ci.yml`,
    `Jenkinsfile`, `azure-pipelines.yml`, `.travis.yml` or
-   `bitbucket-pipelines.yml` at the repo root), heinzel doesn't push it: the
+   `bitbucket-pipelines.yml` at the repo root), underling doesn't push it: the
    run fails as stage `push` with the reason "changes CI configuration".
-8. **Push and PR.** heinzel pushes the branch from the mirror with its own
+8. **Push and PR.** underling pushes the branch from the mirror with its own
    token, then opens a draft PR against the default branch:
    `POST /repos/{owner}/{repo}/pulls` with title
    `Fix Sentry issue <issueId>: <alert title>` (at most 200 runes) and a body
@@ -208,7 +208,7 @@ key). The first event, Started or Skipped, is appended at expected version 0,
 so a repeated alert (a redelivery, or the rule firing again) hits a version
 conflict, is logged as `duplicate` and ignored, even across restarts. The
 outcome follows at expected version 1. Failed is final: there's no retry. If
-heinzel crashes mid-run, the issue stays Started and isn't retried.
+underling crashes mid-run, the issue stays Started and isn't retried.
 
 An alert the handler picks up after shutdown has begun (between the
 automation's context being cancelled and the event handlers stopping) gets
@@ -244,15 +244,15 @@ The slice reads these when it is built. Any invalid value fails startup with
 | `INVESTIGATION_TIMEOUT` | no | positive Go duration | `30m` |
 | `INVESTIGATION_MAX_AGE` | no | positive Go duration | `1h` |
 | `CLAUDE_BIN` | no | path or name of the `claude` executable | `claude` |
-| `INVESTIGATION_WORK_DIR` | no | directory for the per-run dirs, created (0700) if missing; the child may read only its own run's clone, HOME and Claude config dir in it | `heinzel-investigations-<uid>` in the OS temp dir (`heinzel-investigations` on Windows) |
-| `INVESTIGATION_DENY_READ` | no | comma-separated absolute paths the child may not read, such as heinzel's data dir | |
+| `INVESTIGATION_WORK_DIR` | no | directory for the per-run dirs, created (0700) if missing; the child may read only its own run's clone, HOME and Claude config dir in it | `underling-investigations-<uid>` in the OS temp dir (`underling-investigations` on Windows) |
+| `INVESTIGATION_DENY_READ` | no | comma-separated absolute paths the child may not read, such as underling's data dir | |
 | `GITHUB_API_URL` | no | absolute `http` or `https` URL of the GitHub REST API, without credentials, query or fragment; `GITHUB_TOKEN` goes to it, so use `http` only for a local test server | `https://api.github.com` |
 | `GITHUB_CLONE_URL` | no | clone base ending in `/`: a URL or a local dir; repos are cloned (and pushed) at `<base><owner>/<repo>.git`; `GITHUB_TOKEN` goes to it, so use `http` or another host only for a local test remote | `https://github.com/` |
 
 #### Bedrock mode
 
 With `CLAUDE_CODE_USE_BEDROCK=1`, Claude Code and the Codex it calls both use
-Amazon Bedrock with heinzel's AWS credentials, so no Anthropic or OpenAI key
+Amazon Bedrock with underling's AWS credentials, so no Anthropic or OpenAI key
 is needed. `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` and
 `OPENAI_API_KEY` must then be unset (or empty); setting any of them is
 invalid. Bedrock mode reads:
@@ -265,7 +265,7 @@ invalid. Bedrock mode reads:
 | `CODEX_BEDROCK_MODEL` | yes | Codex's Bedrock model id, a plain regional id such as `openai.gpt-oss-120b` (Mantle has no cross-region inference) | |
 | `CODEX_BEDROCK_REGION` | no | AWS region of Codex's Bedrock endpoint | `AWS_REGION` |
 
-**Credentials.** heinzel resolves AWS credentials through the AWS SDK for
+**Credentials.** underling resolves AWS credentials through the AWS SDK for
 Go's default chain: its own process environment (`AWS_ACCESS_KEY_ID`, …,
 `AWS_PROFILE`), the shared config and credentials files, or the ECS task
 role's endpoint. The SDK reads these itself, not through the slice's
@@ -286,10 +286,10 @@ keys) always pass. Unverified: whether the ECS credential endpoint hands
 out new task-role credentials more than `INVESTIGATION_TIMEOUT` before the
 old ones expire. If it doesn't, runs fail as stage `claude` in that window
 of each rotation; a shorter timeout narrows it.
-The child gets them as plain env vars, so it never needs heinzel's `HOME`
+The child gets them as plain env vars, so it never needs underling's `HOME`
 or a credential endpoint.
 
-**Codex config.** Before each run, heinzel writes the child's
+**Codex config.** Before each run, underling writes the child's
 `HOME/.codex/config.toml` (dir 0700, file 0600), which selects Codex's
 built-in `amazon-bedrock` provider (Bedrock's OpenAI-compatible Mantle
 endpoint):
@@ -314,11 +314,11 @@ needs are under [Isolation](#isolation) and [AWS needs](#aws-needs).
 
 #### Paths the child may not read
 
-heinzel's own `HOME` is also denied to the child. Neither the work dir nor a
+underling's own `HOME` is also denied to the child. Neither the work dir nor a
 plugin dir may lie inside `HOME` or an `INVESTIGATION_DENY_READ` path, and no
 denied path (the work dir included) may lie inside a plugin dir or the dir of
 the `claude` binary; startup fails otherwise. So keep the plugins outside
-`HOME`, e.g. in `/opt/heinzel/plugins`.
+`HOME`, e.g. in `/opt/underling/plugins`.
 
 The same goes for tools on `PATH`: sandboxed commands can't run anything
 from a `PATH` entry that lies, as given or with symlinks resolved, inside
@@ -329,7 +329,7 @@ fail. Install `git`, `codex` and the like outside `HOME`, e.g. in
 `/usr/local/bin`.
 
 On Unix, the work dir must be a real directory (not a symlink), owned by
-heinzel's user, with no group or other permissions (`mode & 0o077 == 0`).
+underling's user, with no group or other permissions (`mode & 0o077 == 0`).
 If it already exists at startup and fails this check, startup fails with
 "invalid configuration". It is checked again at the start of each run;
 there a failure fails the run as stage `clone` and names the problem. This keeps another user of a shared temp dir from creating the
@@ -350,22 +350,22 @@ The host (the binary ships as linux-arm64) needs on `PATH`:
   unsandboxed when they are missing.
 - the target repo's toolchain (`go` for a Go repo), outside `HOME` and
   working offline. The child's env is an exact allowlist, so a variable like
-  `GOTOOLCHAIN=local` set in heinzel's env never reaches the child's
+  `GOTOOLCHAIN=local` set in underling's env never reaches the child's
   `go test`; set it in `$GOROOT/go.env` instead, or Go tries to download
   the toolchain the repo's `go.mod` asks for. The sandbox has no module proxy
   access either, so a target repo's tests can only use modules already
   present (vendored, or in the toolchain).
 
 It also needs the Codex and auto-task plugins unpacked in the dirs named by
-`CLAUDE_PLUGIN_DIRS`, outside heinzel's `HOME`.
+`CLAUDE_PLUGIN_DIRS`, outside underling's `HOME`.
 
-Run heinzel as a dedicated OS user (or in a container) that owns nothing
+Run underling as a dedicated OS user (or in a container) that owns nothing
 else. The sandbox narrows what the child can read and write, but the child
-still runs as heinzel's user.
+still runs as underling's user.
 
 #### Isolation
 
-heinzel runs, in the work clone, with the prompt on stdin (`-p` reads it
+underling runs, in the work clone, with the prompt on stdin (`-p` reads it
 there when argv has none):
 
 ```
@@ -384,7 +384,7 @@ still sends SigV4-signed Bedrock requests (see
 
 The run dir holds `repo` (the work clone), `home` and `claude-config` (the
 child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
-`HOME` of heinzel's own git commands).
+`HOME` of underling's own git commands).
 
 - **Environment.** The child's environment is exactly `PATH`, `HOME` and
   `CLAUDE_CONFIG_DIR` (fresh, empty dirs in the run dir, outside the clone),
@@ -398,7 +398,7 @@ child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
   (`ANTHROPIC_SMALL_FAST_MODEL`), `AWS_ACCESS_KEY_ID` and
   `AWS_SECRET_ACCESS_KEY`, plus `AWS_SESSION_TOKEN` only when the
   credentials have one. It never sees `GITHUB_TOKEN`,
-  `SENTRY_CLIENT_SECRET` or any other variable of heinzel's.
+  `SENTRY_CLIENT_SECRET` or any other variable of underling's.
 - **No ambient config.** `--bare` skips CLAUDE.md discovery, hooks, installed
   plugins and MCP servers; `--setting-sources ""` loads no user, project or
   local settings files, so the cloned repo's `.claude/` can't change the
@@ -419,7 +419,7 @@ child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
       "disableBypassPermissionsMode": "disable",
       "deny": [
         "Read(//proc/**)",
-        "Read(/<heinzel's HOME>/**)",
+        "Read(/<underling's HOME>/**)",
         "Read(/<each INVESTIGATION_DENY_READ path>/**)",
         "Read(/<each other entry in <work>>/**)",
         "Read(/<run>/mirror.git/**)",
@@ -433,7 +433,7 @@ child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
       "allowUnsandboxedCommands": false,
       "filesystem": {
         "allowWrite": ["<run>/repo", "<run>/home"],
-        "denyRead": ["<heinzel's HOME>", "<each INVESTIGATION_DENY_READ path>", "<work>"],
+        "denyRead": ["<underling's HOME>", "<each INVESTIGATION_DENY_READ path>", "<work>"],
         "allowRead": ["<run>/repo", "<run>/home", "<run>/claude-config", "<each plugin dir>", "<dir of the claude binary>"]
       },
       "network": {"allowedDomains": ["api.openai.com"]}
@@ -449,11 +449,11 @@ child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
 
   Shell commands run in the sandbox, which refuses to start unsandboxed and
   never retries a command outside it. They may write only to the work clone
-  and the child's `HOME` (for Codex and tool caches; heinzel's git never uses
+  and the child's `HOME` (for Codex and tool caches; underling's git never uses
   it), plus the sandbox's own per-user temp dir, which Claude Code always
   allows, and reach only the OpenAI API (in Bedrock mode, Bedrock's Mantle
   endpoint), for Codex. They may not read
-  heinzel's `HOME`, the `INVESTIGATION_DENY_READ` paths or the work dir
+  underling's `HOME`, the `INVESTIGATION_DENY_READ` paths or the work dir
   (`HOME` and each `INVESTIGATION_DENY_READ` path are listed both as given
   and, when it differs, with symlinks resolved, in `denyRead` and in the
   `Read` deny rules alike); the
@@ -467,7 +467,7 @@ child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
   `acceptEdits` auto-approves edits only inside the working directory, and
   with `--permission-prompts none` anything else that would prompt is
   denied. Bypass mode is disabled. `-p` silently ignores invalid settings,
-  so heinzel checks the `system/init` event (see step 5); that event doesn't
+  so underling checks the `system/init` event (see step 5); that event doesn't
   report the sandbox itself.
 - **The prompt** starts with `/at:auto-task` (bare mode doesn't list skills,
   so the command is named explicitly). It overrides auto-task's own setup:
@@ -477,12 +477,12 @@ child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
   merge, PR or `/at:ship-task`). It asks for a closing summary. The issue
   details follow as JSON data (title capped at 2000 runes), marked as not
   instructions.
-- **The token stays with heinzel.** git gets the token only through
+- **The token stays with underling.** git gets the token only through
   `GIT_CONFIG_*` environment variables (`http.extraHeader`), never in argv, a
   remote URL or a config file. Claude's clone has no GitHub remote and no
-  token. heinzel pushes from its own mirror, with hooks off, after fetching
+  token. underling pushes from its own mirror, with hooks off, after fetching
   only the clone's branches out of it, so changes Claude makes to the
-  clone's `.git` (hooks, config, remotes) never run with the token. heinzel's
+  clone's `.git` (hooks, config, remotes) never run with the token. underling's
   git runs with its own `HOME` (`git-home`, which the child can neither read
   nor write), `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, so a
   `.gitconfig` Claude plants in its `HOME` (say a `url.<x>.insteadOf`)
@@ -491,9 +491,9 @@ child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
   use a dedicated, low-limit key. In Bedrock mode it can read the AWS
   credentials instead (sandboxed commands see the child's env), so scope the
   role to Bedrock invoke only, as [AWS needs](#aws-needs) lists, and nothing
-  else. The child runs as heinzel's OS user and
+  else. The child runs as underling's OS user and
   can read whatever that user can outside the denied paths, and could
-  inspect heinzel's processes; run heinzel as a dedicated user or in a
+  inspect underling's processes; run underling as a dedicated user or in a
   container.
 
 #### AWS needs
@@ -580,8 +580,8 @@ Run without an AWS account, with dummy credentials and a local stub
 
 #### CI
 
-A branch heinzel pushes to the repo can trigger the repo's CI, which may run
-with the repo's secrets. heinzel refuses to push a branch that changes CI
+A branch underling pushes to the repo can trigger the repo's CI, which may run
+with the repo's secrets. underling refuses to push a branch that changes CI
 configuration (step 7), and `GITHUB_TOKEN` must not have the `workflow`
 scope, so GitHub itself rejects a push that touches `.github/workflows/`.
 The residual risk is build scripts that existing push-triggered CI runs
@@ -592,7 +592,7 @@ from there, so the branch never runs the upstream repo's push CI.
 
 ## Container image
 
-`deploy/image/Dockerfile` builds a linux/arm64 image that runs heinzel in
+`deploy/image/Dockerfile` builds a linux/arm64 image that runs underling in
 [Bedrock mode](#bedrock-mode) with every [host
 prerequisite](#host-prerequisites). The Dockerfile is the one place
 versions are pinned: base `node:22.23.4-bookworm-slim` pinned by its
@@ -604,33 +604,33 @@ if apt installs a bubblewrap other than the one the [sandbox
 probe](#sandbox-probe) result holds for, and that `go env GOTOOLCHAIN` prints
 `local` with an empty env.
 
-- **User.** `heinzel`, uid/gid 10001, `HOME=/home/heinzel`. Every tool lives
-  outside `HOME`: `/usr/local/bin` (`heinzel`, `claude`, `codex`,
-  `heinzel-sandbox-probe`) and `/usr/local/go`, with `GOTOOLCHAIN=local` in
+- **User.** `underling`, uid/gid 10001, `HOME=/home/underling`. Every tool lives
+  outside `HOME`: `/usr/local/bin` (`underling`, `claude`, `codex`,
+  `underling-sandbox-probe`) and `/usr/local/go`, with `GOTOOLCHAIN=local` in
   `/usr/local/go/go.env`.
-- **Paths.** `/var/lib/heinzel` (root, 0755) holds `data` (the event store)
-  and `work` (the per-run dirs), both heinzel's and 0700. The Codex and
-  auto-task plugins are in `/opt/heinzel/plugins/{codex,at}`, root-owned and
+- **Paths.** `/var/lib/underling` (root, 0755) holds `data` (the event store)
+  and `work` (the per-run dirs), both underling's and 0700. The Codex and
+  auto-task plugins are in `/opt/underling/plugins/{codex,at}`, root-owned and
   world-readable.
 - **ENV.** `HOME`, `PATH` (`/usr/local/go/bin` first, nothing under `HOME`),
-  `INVESTIGATION_WORK_DIR=/var/lib/heinzel/work`,
-  `INVESTIGATION_DENY_READ=/var/lib/heinzel/data` (exactly the data dir: a
+  `INVESTIGATION_WORK_DIR=/var/lib/underling/work`,
+  `INVESTIGATION_DENY_READ=/var/lib/underling/data` (exactly the data dir: a
   parent would contain the work dir and fail startup),
-  `CLAUDE_PLUGIN_DIRS=/opt/heinzel/plugins/codex,/opt/heinzel/plugins/at`,
+  `CLAUDE_PLUGIN_DIRS=/opt/underling/plugins/codex,/opt/underling/plugins/at`,
   `CLAUDE_CODE_USE_BEDROCK=1` and `GOTOOLCHAIN=local`. A deployment adds only
   `SENTRY_GITHUB_REPOS`, `GITHUB_TOKEN`, `SENTRY_CLIENT_SECRET`,
   `AWS_REGION`, `ANTHROPIC_MODEL`, `CODEX_BEDROCK_MODEL` and, optionally,
   the other Bedrock and investigation variables. Startup logs no "won't run
   inside the sandbox" warning.
-- **Labels.** `heinzel.claude`, `heinzel.codex`, `heinzel.go`,
-  `heinzel.bwrap`, `heinzel.plugins.codex` and `heinzel.plugins.at`, each the version inside.
-- **Runtime.** `USER heinzel`, `EXPOSE 8080`, no entrypoint and
-  `CMD ["heinzel","-addr",":8080","-data-dir","/var/lib/heinzel/data"]`, so a
-  probe task only overrides the command with `["heinzel-sandbox-probe"]`.
+- **Labels.** `underling.claude`, `underling.codex`, `underling.go`,
+  `underling.bwrap`, `underling.plugins.codex` and `underling.plugins.at`, each the version inside.
+- **Runtime.** `USER underling`, `EXPOSE 8080`, no entrypoint and
+  `CMD ["underling","-addr",":8080","-data-dir","/var/lib/underling/data"]`, so a
+  probe task only overrides the command with `["underling-sandbox-probe"]`.
   `HEALTHCHECK` runs `curl -fsS http://127.0.0.1:8080/healthz` every 10s
   (timeout 3s, start period 15s, 3 retries).
 - **Writable root.** Don't set `readonlyRootFilesystem`: `/tmp`, `HOME`,
-  `/var/lib/heinzel/data` and `/var/lib/heinzel/work` must be writable.
+  `/var/lib/underling/data` and `/var/lib/underling/work` must be writable.
 
 [infra/README.md](../infra/README.md) deploys the image to ECS Fargate
 behind an HTTPS ALB with OpenTofu, including a Fargate run of the probe.
@@ -642,7 +642,7 @@ Make targets (all but `image-context` need Docker):
   system test's rule) of `openai-codex/codex` and `auto-task/at` under
   `PLUGIN_CACHE` (default `~/.claude/plugins/cache`), without their
   `.in_use/`. It records the two versions in `bin/image/plugin-versions.mk`.
-- `make image` builds `$(IMAGE):$(IMAGE_TAG)` (defaults `heinzel` and the
+- `make image` builds `$(IMAGE):$(IMAGE_TAG)` (defaults `underling` and the
   12-character `HEAD` commit, with a `-dirty` suffix when `git status
   --porcelain` shows uncommitted or untracked changes), passing the plugin
   versions as the required build args `CODEX_PLUGIN_VERSION` and
@@ -657,7 +657,7 @@ Make targets (all but `image-context` need Docker):
 
 ### Sandbox probe
 
-`heinzel-sandbox-probe` checks whether a container can run Claude Code's
+`underling-sandbox-probe` checks whether a container can run Claude Code's
 sandbox. It fails when run as root or when `bwrap` or `socat` is missing.
 Otherwise it runs, with a fresh `mktemp -d` dir `$d`, a bwrap argv that
 mirrors claude 2.1.317's Linux sandbox invocation (namespaces, mounts,
@@ -699,7 +699,7 @@ check:
 1. `"msg":"app started"` is logged within 30s, with no "won't run inside
    the sandbox" line;
 2. `GET /healthz` (via `docker exec … curl`) returns 200;
-3. `heinzel-sandbox-probe` passes.
+3. `underling-sandbox-probe` passes.
 
 Checks 1–2 failing exit 1. A probe failure prints a warning that Fargate
 likely can't run the sandbox and exits 0, unless `SMOKE_REQUIRE_PROBE=1`.
@@ -718,7 +718,7 @@ local settings the probe gives:
 
 So even ECS on EC2 would need unconfined seccomp plus an unmasked `/proc`,
 or Claude Code's `enableWeakerNestedSandbox` (`--bind /proc /proc`), which
-lets sandboxed commands read `/proc/<heinzel pid>/environ`, `GITHUB_TOKEN`
+lets sandboxed commands read `/proc/<underling pid>/environ`, `GITHUB_TOKEN`
 included. That's a security decision for 016.03/016.05; the image enables
 neither.
 

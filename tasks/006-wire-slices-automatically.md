@@ -41,17 +41,17 @@ Add a small registry to `internal/agent`, with `Build` turning registrations int
    - Test `Build` for the order kept within each kind, the first error stopping it, and an empty registry giving empty `Slices`.
 2. **Slice registration:** each slice package gets an `init()` that registers a factory calling its existing `New`. The record slice passes `d.Getenv, d.Logger`. The handle slice wraps its result as `(automation, nil)`. `New` stays exported, so the existing tests are untouched.
 3. **Generator and generated file in `internal/slices`:**
-   - Add a `//go:generate go run gen.go` directive (on `doc.go`), and a `//go:build ignore` `gen.go` that lists the subdirectories of its working directory. It writes, through `go/format`, a file in package `slices` with the standard generated-code header and one sorted blank import `heinzel/internal/slices/<dir>` per directory.
+   - Add a `//go:generate go run gen.go` directive (on `doc.go`), and a `//go:build ignore` `gen.go` that lists the subdirectories of its working directory. It writes, through `go/format`, a file in package `slices` with the standard generated-code header and one sorted blank import `underling/internal/slices/<dir>` per directory.
    - Give the generator an output-path flag that defaults to the generated file's name. The sandbox can't write into the worktree from Bash, so verify by generating to `$TMPDIR` and diffing against the committed file, which you write with Write/Edit.
    - Update the `doc.go` package comment, which currently says the package holds only the test.
 4. **Drift test in `internal/slices`:** compare the subdirectory names with the blank imports parsed from the generated file (the existing `imports` helper parses imports already), and report missing and extra entries. Also assert that the file has the generated-code header.
-5. **`main`:** remove both slice imports and the `agent.Slices{…}` literal, and add `_ "heinzel/internal/slices"`. Call `agent.Build(agent.Deps{Getenv: os.Getenv, Logger: logger})`. On error, log "invalid configuration" and return 2, in the same place as today (after flag parsing, before listening). Check: `grep -n 'internal/slices/' cmd/heinzel/main.go` is empty.
+5. **`main`:** remove both slice imports and the `agent.Slices{…}` literal, and add `_ "underling/internal/slices"`. Call `agent.Build(agent.Deps{Getenv: os.Getenv, Logger: logger})`. On error, log "invalid configuration" and return 2, in the same place as today (after flag parsing, before listening). Check: `grep -n 'internal/slices/' cmd/underling/main.go` is empty.
 6. **Docs:** update "Adding a slice" in `docs/event-model.md` to say: create the folder, write `New`, register in `init()` via `agent.RegisterStateChange` / `agent.RegisterAutomation`, then run `go generate ./...` (the drift test fails until you do). Remove the step of passing the slice to `agent.Run` from `main`.
 
 ### Notes
 
 - Go 1.21+ initialises imported packages in import-path order, so the registration order (and the route and handler order) is deterministic.
-- Check exit codes with a built binary (`go build -o $TMPDIR/heinzel ./cmd/heinzel`), not `go run`, which turns every failure into exit 1. Without the secret it exits 2 with "invalid configuration". `-h` exits 0.
+- Check exit codes with a built binary (`go build -o $TMPDIR/underling ./cmd/underling`), not `go run`, which turns every failure into exit 1. Without the secret it exits 2 with "invalid configuration". `-h` exits 0.
 - Sandbox: use Edit/Write for every file in the worktree, and check formatting with `gofmt -l`. Go needs `GOCACHE=$TMPDIR/gocache GOTMPDIR=$TMPDIR`. The `internal/agent` `Run` tests can't bind ports here (accepted), but the new `Build` tests don't listen, so they must pass.
 
 ## Implementation Notes

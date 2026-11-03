@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"heinzel/internal/slices/investigatesentryissue/claude"
+	"underling/internal/slices/investigatesentryissue/claude"
 )
 
 const (
@@ -54,8 +54,8 @@ type config struct {
 	maxAge      time.Duration
 	claudeBin   string
 	workDir     string // "" until New picks the default
-	path        string // the child's PATH: heinzel's own
-	parentHome  string // heinzel's HOME, or ""; the child may not read it
+	path        string // the child's PATH: underling's own
+	parentHome  string // underling's HOME, or ""; the child may not read it
 	denyRead    []string
 	// readable are the paths under denied ones that sandboxed commands
 	// still need: the plugin dirs and the claude binary's dir. Set by
@@ -64,7 +64,7 @@ type config struct {
 	apiURL    string // the GitHub REST API base
 	cloneBase string // repos are cloned from <cloneBase><owner>/<repo>.git
 	// bedrock is set in Bedrock mode, where Claude and Codex use Amazon
-	// Bedrock with heinzel's AWS credentials instead of the two keys.
+	// Bedrock with underling's AWS credentials instead of the two keys.
 	bedrock *bedrockConfig
 }
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"heinzel/internal/slices/recordsentryissuealert"
+	"underling/internal/slices/recordsentryissuealert"
 )
 
 func env(vars map[string]string) func(string) string {

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/events"
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/events"
+	"underling/internal/platform/eventstore"
 )
 
 // These tests specify the investigator's decisions, in memory: given the
@@ -97,7 +97,7 @@ func TestAFailedClaudeRunFailsTheInvestigation(t *testing.T) {
 func TestCommitsOnOtherBranchesFailTheInvestigation(t *testing.T) {
 	given(t).
 		when(anAlert(), claudeCommitsOn("claude-own", "claude-renamed")).
-		then(started(), failed(events.InvestigationFailedClaude, "claude committed on branches other than "+testBranch+", which heinzel doesn't push: claude-own, claude-renamed")).
+		then(started(), failed(events.InvestigationFailedClaude, "claude committed on branches other than "+testBranch+", which underling doesn't push: claude-own, claude-renamed")).
 		andNothingIsPushed()
 }
 
@@ -140,7 +140,7 @@ func TestAFailedPushFailsTheInvestigation(t *testing.T) {
 func TestCIConfigChangesAreNotPushed(t *testing.T) {
 	given(t).
 		when(anAlert(), claudeChanges("src/app.js", ".github/workflows/a.yml", ".gitlab-ci.yml", "Jenkinsfile", ".circleci/config.yml", ".travis.yml", ".buildkite/pipeline.yml", "azure-pipelines.yml")).
-		then(started(), failed(events.InvestigationFailedPush, "changes CI configuration, so heinzel won't push it: .github/workflows/a.yml, .gitlab-ci.yml, Jenkinsfile, .circleci/config.yml, .travis.yml, and 2 more")).
+		then(started(), failed(events.InvestigationFailedPush, "changes CI configuration, so underling won't push it: .github/workflows/a.yml, .gitlab-ci.yml, Jenkinsfile, .circleci/config.yml, .travis.yml, and 2 more")).
 		andNothingIsPushed()
 }
 
@@ -152,20 +152,20 @@ func TestAFailedPRFailsTheInvestigation(t *testing.T) {
 
 func TestShuttingDownWhileClaudeRunsFailsTheInvestigation(t *testing.T) {
 	given(t).
-		when(anAlert(), heinzelShutsDownWhileClaudeRuns).
-		then(started(), failed(events.InvestigationFailedShutdown, "heinzel shut down while claude was running")).
+		when(anAlert(), underlingShutsDownWhileClaudeRuns).
+		then(started(), failed(events.InvestigationFailedShutdown, "underling shut down while claude was running")).
 		andNothingIsPushed()
 }
 
 func TestAnyFailureDuringShutdownIsAShutdownFailure(t *testing.T) {
 	given(t).
-		when(anAlert(), heinzelShutsDownDuringThePush).
+		when(anAlert(), underlingShutsDownDuringThePush).
 		then(started(), failed(events.InvestigationFailedShutdown, "git push: context canceled"))
 }
 
 func TestAnAlertPickedUpDuringShutdownAddsNothing(t *testing.T) {
 	given(t).
-		heinzelIsShuttingDown().
+		underlingIsShuttingDown().
 		when(anAlert()).
 		then().
 		andNothingIsCloned()
@@ -198,7 +198,7 @@ func TestNameIsFixed(t *testing.T) {
 
 const (
 	testIssueID     = "1117540176"
-	testBranch      = "heinzel/sentry-" + testIssueID
+	testBranch      = "underling/sentry-" + testIssueID
 	testPRURL       = "https://github.com/acme/web/pull/7"
 	testSummary     = "Root cause: blooopy was never declared. Fix: declare it."
 	testMaxAge      = time.Hour
@@ -245,8 +245,8 @@ func given(t *testing.T, prior ...event) *spec {
 	return s
 }
 
-// heinzelIsShuttingDown cancels the handler's context before the alert.
-func (s *spec) heinzelIsShuttingDown() *spec {
+// underlingIsShuttingDown cancels the handler's context before the alert.
+func (s *spec) underlingIsShuttingDown() *spec {
 	s.cancel()
 	return s
 }
@@ -491,12 +491,12 @@ func prFails(reason string) behaviour {
 	return func(s *spec) { s.infra.prErr = errors.New(reason) }
 }
 
-func heinzelShutsDownWhileClaudeRuns(s *spec) {
+func underlingShutsDownWhileClaudeRuns(s *spec) {
 	s.infra.duringClaude = s.cancel
-	s.infra.claudeErr = errors.New("heinzel shut down while claude was running")
+	s.infra.claudeErr = errors.New("underling shut down while claude was running")
 }
 
-func heinzelShutsDownDuringThePush(s *spec) {
+func underlingShutsDownDuringThePush(s *spec) {
 	s.infra.duringPush = s.cancel
 	s.infra.pushErr = errors.New("git push: context canceled")
 }

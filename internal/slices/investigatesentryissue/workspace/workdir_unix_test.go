@@ -12,7 +12,7 @@ import (
 )
 
 func TestTheDefaultWorkDirIsPerUser(t *testing.T) {
-	want := filepath.Join(os.TempDir(), "heinzel-investigations-"+strconv.Itoa(os.Getuid()))
+	want := filepath.Join(os.TempDir(), "underling-investigations-"+strconv.Itoa(os.Getuid()))
 	if got := DefaultDir(); got != want {
 		t.Fatalf("DefaultDir() = %s, want %s", got, want)
 	}

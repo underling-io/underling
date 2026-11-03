@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"heinzel/internal/events"
+	"underling/internal/events"
 )
 
 // The alert's details end up in Claude's prompt and in pull requests, so

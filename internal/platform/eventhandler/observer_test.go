@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/platform/eventhandler"
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/platform/eventhandler"
+	"underling/internal/platform/eventstore"
 )
 
 // waitLimit only guards against hangs; the tests never sleep.

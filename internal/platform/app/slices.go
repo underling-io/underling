@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"heinzel/internal/platform/eventhandler"
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/platform/eventhandler"
+	"underling/internal/platform/eventstore"
 )
 
 // StateChange is a state-change slice: one HTTP route that may append to

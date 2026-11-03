@@ -18,11 +18,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
-	"heinzel/internal/events"
-	"heinzel/internal/platform/app"
-	"heinzel/internal/platform/eventhandler"
-	"heinzel/internal/platform/eventstore"
-	"heinzel/internal/slices/investigatesentryissue"
+	"underling/internal/events"
+	"underling/internal/platform/app"
+	"underling/internal/platform/eventhandler"
+	"underling/internal/platform/eventstore"
+	"underling/internal/slices/investigatesentryissue"
 )
 
 // These tests run the slice end to end, as New wires it: real git against
@@ -34,7 +34,7 @@ const (
 	githubToken  = "ghp-test-token-4f2a9c"
 	sentrySecret = "sentry-test-secret-77b1"
 	issueID      = "1117540176"
-	branch       = "heinzel/sentry-" + issueID
+	branch       = "underling/sentry-" + issueID
 	apiBase      = "https://api.github.test"
 	prURL        = "https://github.com/acme/web/pull/7"
 )
@@ -119,7 +119,7 @@ func newHarness(t *testing.T, mode string, opts ...option) *harness {
 	}
 	h := &harness{t: t, remotes: t.TempDir(), workDir: t.TempDir(), logs: new(bytes.Buffer), logMu: new(sync.Mutex), clock: now}
 	newRemote(t, filepath.Join(h.remotes, "acme", "web.git"))
-	if err := os.Chmod(h.workDir, 0o700); err != nil { // as heinzel requires
+	if err := os.Chmod(h.workDir, 0o700); err != nil { // as underling requires
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(h.workDir, fakeModeFile), []byte(mode), 0o644); err != nil {
@@ -135,7 +135,7 @@ func newHarness(t *testing.T, mode string, opts ...option) *harness {
 		"CLAUDE_BIN":             self,
 		"INVESTIGATION_WORK_DIR": h.workDir,
 		"PATH":                   os.Getenv("PATH"),
-		"HEINZEL_UNRELATED":      "unrelated-value",
+		"UNDERLING_UNRELATED":    "unrelated-value",
 		"GITHUB_API_URL":         apiBase,
 		"GITHUB_CLONE_URL":       h.remotes + "/",
 	}
@@ -168,7 +168,7 @@ func newHarness(t *testing.T, mode string, opts ...option) *harness {
 }
 
 // restart closes and reopens the store and builds a new handler on it, as
-// a heinzel restart would.
+// a underling restart would.
 func (h *harness) restart() {
 	h.t.Helper()
 	if err := h.store.Close(); err != nil {
@@ -397,7 +397,7 @@ func TestHappyPathPushesTheBranchAndOpensADraftPR(t *testing.T) {
 	h.assertNoLeftovers()
 }
 
-func TestChildEnvironmentHoldsNoHeinzelSecrets(t *testing.T) {
+func TestChildEnvironmentHoldsNoUnderlingSecrets(t *testing.T) {
 	for _, mode := range []struct {
 		name       string
 		opts       []option

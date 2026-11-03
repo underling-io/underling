@@ -1,19 +1,19 @@
-# heinzel on AWS (OpenTofu)
+# underling on AWS (OpenTofu)
 
-This directory deploys the heinzel image ([docs/event-model.md § Container
+This directory deploys the underling image ([docs/event-model.md § Container
 image](../docs/event-model.md#container-image)) as one ECS Fargate task
 behind an HTTPS ALB. Claude Code and Codex reach Bedrock through the task
 role ([§ Bedrock mode](../docs/event-model.md#bedrock-mode), [§ AWS
 needs](../docs/event-model.md#aws-needs)).
 
 - **`module.base`** holds the VPC (two AZs, public subnets, no NAT), the ECR
-  repository `heinzel`, the ECS cluster `heinzel`, the log group
-  `/ecs/heinzel`, the secrets `heinzel/github-token` and
-  `heinzel/sentry-client-secret` (OpenTofu never sets their values), the
-  execution and task roles, and the probe task definition `heinzel-probe`.
+  repository `underling`, the ECS cluster `underling`, the log group
+  `/ecs/underling`, the secrets `underling/github-token` and
+  `underling/sentry-client-secret` (OpenTofu never sets their values), the
+  execution and task roles, and the probe task definition `underling-probe`.
 - **`module.service`** holds the ACM certificate and its DNS validation, the
-  ALB, the `heinzel` task definition and service, and the Route 53 alias.
-  Port 80 redirects to 443. On 443 only `/sentry/callback` reaches heinzel;
+  ALB, the `underling` task definition and service, and the Route 53 alias.
+  Port 80 redirects to 443. On 443 only `/sentry/callback` reaches underling;
   everything else gets the ALB's own 404.
 
 The service runs one task. A deploy stops the old task before it starts the
@@ -70,7 +70,7 @@ in S3 instead, without changing the code:
 
    ```hcl
    bucket       = "my-tofu-state"
-   key          = "heinzel/terraform.tfstate"
+   key          = "underling/terraform.tfstate"
    region       = "eu-central-1"
    use_lockfile = true
    ```
@@ -118,7 +118,7 @@ task=$(aws ecs run-task --launch-type FARGATE --cluster "$cluster" \
 aws ecs wait tasks-stopped --cluster "$cluster" --tasks "$task"
 aws ecs describe-tasks --cluster "$cluster" --tasks "$task" \
   --query 'tasks[0].{exitCode: containers[0].exitCode, reason: containers[0].reason, stoppedReason: stoppedReason}'
-aws logs tail /ecs/heinzel --since 1h --log-stream-names "probe/heinzel/${task##*/}"
+aws logs tail /ecs/underling --since 1h --log-stream-names "probe/underling/${task##*/}"
 ```
 
 - **Pass:** exit code 0, and the last log line is `sandbox probe: PASS`.
@@ -132,7 +132,7 @@ aws logs tail /ecs/heinzel --since 1h --log-stream-names "probe/heinzel/${task##
 ### 4. Set the secrets
 
 Create the Sentry internal integration; its client secret is the value of
-`heinzel/sentry-client-secret`. `GITHUB_TOKEN` must be able to push branches
+`underling/sentry-client-secret`. `GITHUB_TOKEN` must be able to push branches
 and open PRs on the mapped repos, and must not have the `workflow` scope.
 
 Keep the values out of argv and shell history: read them without echo and
@@ -156,7 +156,7 @@ put_secret SENTRY_CLIENT_SECRET "$(tofu output -raw sentry_client_secret_arn)"
 ```
 
 ECS reads the secrets when a task starts. After changing one later, run
-`aws ecs update-service --cluster heinzel --service heinzel --force-new-deployment`.
+`aws ecs update-service --cluster underling --service underling --force-new-deployment`.
 
 ### 5. Apply the rest
 
@@ -174,7 +174,7 @@ the integration as an alert-rule action. Then check:
 
 ```sh
 curl -sI http://<domain>/                     # 301 to https
-curl -s -o /dev/null -w '%{http_code}\n' https://<domain>/sentry/callback   # 405 from heinzel, not the ALB's 404
+curl -s -o /dev/null -w '%{http_code}\n' https://<domain>/sentry/callback   # 405 from underling, not the ALB's 404
 ```
 
 ### 7. Roll out a new image tag
@@ -192,9 +192,9 @@ that the old task stopped before the new one started (`stoppedAt` of the old
 earlier than `createdAt` of the new):
 
 ```sh
-aws ecs describe-tasks --cluster heinzel \
-  --tasks $(aws ecs list-tasks --cluster heinzel --family heinzel --desired-status STOPPED --query 'taskArns' --output text) \
-          $(aws ecs list-tasks --cluster heinzel --family heinzel --query 'taskArns' --output text) \
+aws ecs describe-tasks --cluster underling \
+  --tasks $(aws ecs list-tasks --cluster underling --family underling --desired-status STOPPED --query 'taskArns' --output text) \
+          $(aws ecs list-tasks --cluster underling --family underling --query 'taskArns' --output text) \
   --query 'tasks[].{task: taskArn, image: containers[0].image, createdAt: createdAt, stoppedAt: stoppedAt}'
 ```
 
@@ -203,11 +203,11 @@ own (circuit breaker). To roll back by hand, apply the old tag.
 
 ## Post-deploy system test
 
-`make postdeploy-test` drives the deployed heinzel end to end. It resets a
+`make postdeploy-test` drives the deployed underling end to end. It resets a
 throwaway GitHub repo to go-version at the parent of c6a3b57, posts a signed
 Sentry alert for go-version's real panic to `<base_url>/sentry/callback`,
-waits up to 45 minutes for heinzel's draft PR from
-`heinzel/sentry-<issueId>`, and runs upstream's regression test and
+waits up to 45 minutes for underling's draft PR from
+`underling/sentry-<issueId>`, and runs upstream's regression test and
 go-version's suite on that branch (as `make system-test` does locally).
 
 ### The throwaway repo
@@ -224,8 +224,8 @@ go-version's suite on that branch (as `make system-test` does locally).
   and pushes.
 - No branch protection or rulesets on the default branch: the test
   force-pushes it.
-- No tags and no branches besides the default and `heinzel/*`. The test
-  refuses to touch a repo that has any, since heinzel's clone would fetch
+- No tags and no branches besides the default and `underling/*`. The test
+  refuses to touch a repo that has any, since underling's clone would fetch
   them and they could hold the fix.
 - Mapped in `sentry_github_repos`: `<projectId>=<owner>/<repo>`, with the
   project id you pass to the test.
@@ -252,7 +252,7 @@ make postdeploy-test
 
 Expect about 50 minutes at most, and real Bedrock usage. It is
 destructive: it force-pushes the repo's default branch, deletes its
-`heinzel/*` branches and closes their open PRs. heinzel's PR stays open
+`underling/*` branches and closes their open PRs. underling's PR stays open
 until the next run.
 
 Each run posts new event and issue ids, because the deployed store
@@ -263,7 +263,7 @@ If no PR appears in time, the failure names the issue id and the command
 to read the run's logs:
 
 ```sh
-aws logs tail /ecs/heinzel --since 1h --filter-pattern '"<issueId>"'
+aws logs tail /ecs/underling --since 1h --filter-pattern '"<issueId>"'
 ```
 
 A run that ends as Skipped `unmapped` means `sentry_github_repos` doesn't
@@ -272,8 +272,8 @@ failing on Fargate) also surfaces only as this timeout.
 
 ## Notes
 
-- **Logs:** CloudWatch log group `/ecs/heinzel`. The service's streams start
-  with `heinzel/`, the probe's with `probe/`.
+- **Logs:** CloudWatch log group `/ecs/underling`. The service's streams start
+  with `underling/`, the probe's with `probe/`.
 - **Credentials:** the task role's credentials come from the ECS endpoint.
   Whether ECS hands out new ones more than `INVESTIGATION_TIMEOUT` before the
   old ones expire is unverified; if it doesn't, runs fail as stage `claude`

@@ -1,5 +1,5 @@
 #!/bin/sh
-# heinzel-sandbox-probe checks that this container can run Claude Code's
+# underling-sandbox-probe checks that this container can run Claude Code's
 # sandbox. As a non-root user it runs a bwrap argv that mirrors claude
 # 2.1.317's Linux sandbox invocation (user, pid and net namespaces with
 # nested user namespaces disabled, a read-only root, one writable bind, a
@@ -14,7 +14,7 @@ fail() {
 	exit 1
 }
 
-[ "$(id -u)" -ne 0 ] || fail "running as root; run as the heinzel user"
+[ "$(id -u)" -ne 0 ] || fail "running as root; run as the underling user"
 command -v bwrap >/dev/null 2>&1 || fail "bwrap not found on PATH"
 command -v socat >/dev/null 2>&1 || fail "socat not found on PATH"
 command -v bash >/dev/null 2>&1 || fail "bash not found on PATH"
@@ -24,7 +24,7 @@ command -v bash >/dev/null 2>&1 || fail "bash not found on PATH"
 home=$(cd "$HOME" && pwd -P) || fail "cannot resolve HOME"
 case $home in /tmp | /tmp/*) fail "HOME $home is under /tmp, where the writable bind lives" ;; esac
 
-d=$(mktemp -d /tmp/heinzel-sandbox-probe.XXXXXX) || fail "mktemp -d failed"
+d=$(mktemp -d /tmp/underling-sandbox-probe.XXXXXX) || fail "mktemp -d failed"
 trap 'rm -rf "$d"' EXIT
 
 # Runs inside the sandbox with the writable bind as $1, HOME as $2 and the
@@ -37,7 +37,7 @@ checks='
 d=$1 home=$2 outer_pid=$3 outer_net=$4
 (echo probe >"$d/probe") 2>/dev/null || { echo "cannot write to the writable bind $d"; exit 1; }
 for p in / "${d%/*}"; do
-	if (echo probe >"$p/heinzel-sandbox-probe") 2>/dev/null; then
+	if (echo probe >"$p/underling-sandbox-probe") 2>/dev/null; then
 		echo "$p is writable, want a read-only root"
 		exit 1
 	fi

@@ -17,16 +17,16 @@ const openAIHost = "api.openai.com"
 // region.
 func bedrockHost(region string) string { return "bedrock-mantle." + region + ".api.aws" }
 
-// Config is what a run needs from heinzel's settings.
+// Config is what a run needs from underling's settings.
 type Config struct {
 	Bin        string
 	PluginDirs []string
 	Path       string // the child's PATH
 	Anthropic  Credential
 	OpenAIKey  string
-	// ParentHome is heinzel's own HOME, or "". The child may not read it.
+	// ParentHome is underling's own HOME, or "". The child may not read it.
 	ParentHome string
-	// DenyRead are more paths the child may not read, such as heinzel's
+	// DenyRead are more paths the child may not read, such as underling's
 	// data dir.
 	DenyRead []string
 	// Readable are paths under denied ones that sandboxed commands still
@@ -75,8 +75,8 @@ type Dirs struct {
 	Clone        string   // where Claude works
 	Home         string   // the child's HOME
 	ClaudeConfig string   // the child's CLAUDE_CONFIG_DIR
-	Mirror       string   // heinzel's mirror, which holds the token's pushes
-	GitHome      string   // the HOME of heinzel's own git
+	Mirror       string   // underling's mirror, which holds the token's pushes
+	GitHome      string   // the HOME of underling's own git
 }
 
 // Cmd is one invocation of the claude CLI.
@@ -94,7 +94,7 @@ type Cmd struct {
 
 // Command builds the headless claude invocation for a run in dirs. The
 // child gets only PATH, its own HOME and config dir, and the two model
-// credentials from heinzel's environment, or in Bedrock mode its Bedrock
+// credentials from underling's environment, or in Bedrock mode its Bedrock
 // settings, with the model aliases pinned to them, and AWS credentials.
 //
 // --bare never reads an OAuth token, so a run on one goes without it and
@@ -166,7 +166,7 @@ func childEnv(cfg Config, dirs Dirs) []string {
 	return env
 }
 
-// settings is the part of Claude Code's settings.json heinzel generates.
+// settings is the part of Claude Code's settings.json underling generates.
 type settings struct {
 	Permissions struct {
 		DefaultMode                  string   `json:"defaultMode"`
@@ -195,7 +195,7 @@ type settings struct {
 // unsandboxed and never retries outside it. They may write only to the
 // clone and the child's HOME, and reach only the API Codex calls: OpenAI's,
 // or in Bedrock mode Bedrock's in the Codex region. Reads of
-// heinzel's HOME, the deny-read paths and the whole work dir are denied;
+// underling's HOME, the deny-read paths and the whole work dir are denied;
 // a narrower allowRead re-opens the clone, the child's HOME and config dir,
 // the plugin dirs and the claude binary's dir.
 //

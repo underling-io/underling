@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	modulePath   = "heinzel"
+	modulePath   = "underling"
 	slicesPath   = modulePath + "/internal/slices"
 	eventsPath   = modulePath + "/internal/events"
 	platformPath = modulePath + "/internal/platform"
@@ -99,12 +99,12 @@ func TestPlatformMayImport(t *testing.T) {
 	}{
 		{"net/http", true},
 		{"github.com/gin-gonic/gin", true},
-		{"heinzel/internal/events", true},
-		{"heinzel/internal/platform/eventstore", true},
-		{"heinzel/internal/slicesx", true},
-		{"heinzel/internal/slices", false},
-		{"heinzel/internal/slices/alpha", false},
-		{"heinzel/internal/slices/alpha/git", false},
+		{"underling/internal/events", true},
+		{"underling/internal/platform/eventstore", true},
+		{"underling/internal/slicesx", true},
+		{"underling/internal/slices", false},
+		{"underling/internal/slices/alpha", false},
+		{"underling/internal/slices/alpha/git", false},
 	}
 	for _, tt := range tests {
 		if got := platformMayImport(tt.path); got != tt.want {
@@ -121,19 +121,19 @@ func TestImportViolations(t *testing.T) {
 		want  []string
 	}{
 		{"allowed", map[string]string{
-			"alpha.go":      `"context"; "github.com/gin-gonic/gin"; "heinzel/internal/events"; "heinzel/internal/platform/app"; "heinzel/internal/slices/alpha/git"`,
-			"alpha_test.go": `"testing"; "heinzel/internal/platform/eventstore"; "heinzel/internal/slices/alpha"`,
-			"git/git.go":    `"os/exec"; "heinzel/internal/slices/alpha/git/internal"`,
+			"alpha.go":      `"context"; "github.com/gin-gonic/gin"; "underling/internal/events"; "underling/internal/platform/app"; "underling/internal/slices/alpha/git"`,
+			"alpha_test.go": `"testing"; "underling/internal/platform/eventstore"; "underling/internal/slices/alpha"`,
+			"git/git.go":    `"os/exec"; "underling/internal/slices/alpha/git/internal"`,
 		}, nil},
-		{"another slice", map[string]string{"alpha.go": `"heinzel/internal/slices/beta"`}, []string{"alpha.go imports heinzel/internal/slices/beta"}},
-		{"another slice in a test", map[string]string{"alpha_test.go": `"heinzel/internal/slices/beta"`}, []string{"alpha_test.go imports heinzel/internal/slices/beta"}},
-		{"a sibling slice from a sub-package", map[string]string{"git/git.go": `"heinzel/internal/slices/beta/git"`}, []string{"git/git.go imports heinzel/internal/slices/beta/git"}},
-		{"a slice sharing its name prefix", map[string]string{"alpha.go": `"heinzel/internal/slices/alphabet"`}, []string{"alpha.go imports heinzel/internal/slices/alphabet"}},
-		{"the slices parent", map[string]string{"alpha.go": `"heinzel/internal/slices"`}, []string{"alpha.go imports heinzel/internal/slices"}},
-		{"a non-shared package", map[string]string{"alpha.go": `"heinzel/internal/util"`}, []string{"alpha.go imports heinzel/internal/util"}},
-		{"a package under events", map[string]string{"alpha.go": `"heinzel/internal/events/helpers"`}, []string{"alpha.go imports heinzel/internal/events/helpers"}},
-		{"a package posing as platform", map[string]string{"alpha.go": `"heinzel/internal/platformx"`}, []string{"alpha.go imports heinzel/internal/platformx"}},
-		{"the main package", map[string]string{"alpha.go": `"heinzel/cmd/heinzel"`}, []string{"alpha.go imports heinzel/cmd/heinzel"}},
+		{"another slice", map[string]string{"alpha.go": `"underling/internal/slices/beta"`}, []string{"alpha.go imports underling/internal/slices/beta"}},
+		{"another slice in a test", map[string]string{"alpha_test.go": `"underling/internal/slices/beta"`}, []string{"alpha_test.go imports underling/internal/slices/beta"}},
+		{"a sibling slice from a sub-package", map[string]string{"git/git.go": `"underling/internal/slices/beta/git"`}, []string{"git/git.go imports underling/internal/slices/beta/git"}},
+		{"a slice sharing its name prefix", map[string]string{"alpha.go": `"underling/internal/slices/alphabet"`}, []string{"alpha.go imports underling/internal/slices/alphabet"}},
+		{"the slices parent", map[string]string{"alpha.go": `"underling/internal/slices"`}, []string{"alpha.go imports underling/internal/slices"}},
+		{"a non-shared package", map[string]string{"alpha.go": `"underling/internal/util"`}, []string{"alpha.go imports underling/internal/util"}},
+		{"a package under events", map[string]string{"alpha.go": `"underling/internal/events/helpers"`}, []string{"alpha.go imports underling/internal/events/helpers"}},
+		{"a package posing as platform", map[string]string{"alpha.go": `"underling/internal/platformx"`}, []string{"alpha.go imports underling/internal/platformx"}},
+		{"the main package", map[string]string{"alpha.go": `"underling/cmd/underling"`}, []string{"alpha.go imports underling/cmd/underling"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

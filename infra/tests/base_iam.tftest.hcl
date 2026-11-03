@@ -98,11 +98,11 @@ mock_provider "aws" {
 }
 
 variables {
-  name                      = "heinzel"
+  name                      = "underling"
   aws_region                = "eu-central-1"
-  log_group_name            = "/ecs/heinzel"
-  github_token_secret_name  = "heinzel/github-token"
-  sentry_client_secret_name = "heinzel/sentry-client-secret"
+  log_group_name            = "/ecs/underling"
+  github_token_secret_name  = "underling/github-token"
+  sentry_client_secret_name = "underling/sentry-client-secret"
   image_tag                 = "abc123"
   codex_bedrock_model       = "openai.gpt-oss-120b"
   codex_bedrock_region      = "us-west-2"

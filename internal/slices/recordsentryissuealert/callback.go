@@ -12,8 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"heinzel/internal/events"
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/events"
+	"underling/internal/platform/eventstore"
 )
 
 const maxBodyBytes = 10 << 20

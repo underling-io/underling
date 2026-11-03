@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 	"slices"
 
-	"heinzel/internal/slices/investigatesentryissue/claude"
+	"underling/internal/slices/investigatesentryissue/claude"
 )
 
 // resolveReadPaths checks that what the child must read stays readable
 // despite its read denials, and sets cfg.readable. cfg.workDir must be set.
 //
-// Claude's file tools are kept out of heinzel's HOME and the deny-read
+// Claude's file tools are kept out of underling's HOME and the deny-read
 // paths by Read deny rules, which nothing can carve out, so the work dir
 // and the plugin dirs must lie outside them. Sandboxed commands are also
 // denied the work dir. A narrower allowRead re-opens a path inside a denied

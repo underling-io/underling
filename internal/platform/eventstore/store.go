@@ -1,9 +1,9 @@
-// Package eventstore is heinzel's embedded event store. Events live in
+// Package eventstore is underling's embedded event store. Events live in
 // hallgren/eventsourcing's bbolt store (events.db); the per-handler
 // checkpoints live in a bbolt file of their own (checkpoints.db).
 //
 // Each stream maps to one hallgren aggregate: AggregateType is always
-// "heinzel", AggregateID is the stream, Reason is the event type, Data is
+// "underling", AggregateID is the stream, Reason is the event type, Data is
 // the JSON payload as-is and GlobalVersion is the global position.
 package eventstore
 
@@ -20,13 +20,13 @@ import (
 	esbbolt "github.com/hallgren/eventsourcing/eventstore/bbolt"
 )
 
-// File names inside the data dir. An old heinzel.db is never opened.
+// File names inside the data dir. An old underling.db is never opened.
 const (
 	EventsFile      = "events.db"
 	CheckpointsFile = "checkpoints.db"
 )
 
-const aggregateType = "heinzel"
+const aggregateType = "underling"
 
 // ErrConflict is returned by Append when the stream is not at the expected
 // version. Nothing is stored then.

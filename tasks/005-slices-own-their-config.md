@@ -34,14 +34,14 @@ Each slice loads its own configuration, so `main` no longer knows any slice-spec
 
 ### Notes
 
-- `cmd/heinzel` has no tests, and the exit-code behaviour is checked by building and running the binary. Without the secret: `env -u SENTRY_CLIENT_SECRET go run ./cmd/heinzel; echo $?` → 2, plus an "invalid configuration" log line. `go run ./cmd/heinzel -h` → 0.
+- `cmd/underling` has no tests, and the exit-code behaviour is checked by building and running the binary. Without the secret: `env -u SENTRY_CLIENT_SECRET go run ./cmd/underling; echo $?` → 2, plus an "invalid configuration" log line. `go run ./cmd/underling -h` → 0.
 - Sandbox: Bash can't write in the worktree (use Edit/Write; check formatting with `gofmt -l`). Go needs `GOCACHE=$TMPDIR/gocache` (and `go run` may need `GOTMPDIR=$TMPDIR`). The `internal/agent` tests can't bind ports here, which the user accepted. They are untouched by this task anyway.
-- Verify with `grep -nE 'SENTRY|[Ss]ecret' cmd/heinzel/main.go`, which should return nothing.
+- Verify with `grep -nE 'SENTRY|[Ss]ecret' cmd/underling/main.go`, which should return nothing.
 
 ## Implementation Notes
 
 - The plan was followed with no deviations in scope. `main` names the built slice `recordAlert` and puts it in `StateChanges`. The error check sits in the same place as before: after flag parsing, before listening.
-- The plan's exit-code check is slightly off. `go run` always exits 1 when the program fails, and prints `exit status 2` instead. So `go run ...; echo $?` shows 1, not 2. The real exit code was checked with a built binary (`go build -o $TMPDIR/heinzel ./cmd/heinzel`). With the secret unset it exits 2, and with it empty it also exits 2. Both log `"msg":"invalid configuration","error":"SENTRY_CLIENT_SECRET must be set"`. `-h` exits 0. Future plans should check exit codes with a built binary, not `go run`.
+- The plan's exit-code check is slightly off. `go run` always exits 1 when the program fails, and prints `exit status 2` instead. So `go run ...; echo $?` shows 1, not 2. The real exit code was checked with a built binary (`go build -o $TMPDIR/underling ./cmd/underling`). With the secret unset it exits 2, and with it empty it also exits 2. Both log `"msg":"invalid configuration","error":"SENTRY_CLIENT_SECRET must be set"`. `-h` exits 0. Future plans should check exit codes with a built binary, not `go run`.
 - `newMux` in `callback_test.go` now takes `t` so it can fail on a constructor error. Every call site changed from `newMux(s)` to `newMux(t, s)`.
 - The new config tests also check that the error names `SENTRY_CLIENT_SECRET`. The old tests only checked that some error came back.
 - `docs/event-model.md` gets a separate "Adding a slice" bullet on config, so the constructor bullet stays about slice kinds. The Sentry section now says the constructor loads the secret and fails if it is missing or empty.

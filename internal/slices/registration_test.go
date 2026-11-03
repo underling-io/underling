@@ -107,16 +107,16 @@ func TestRegisterCallsCountsAppRegistrations(t *testing.T) {
 	}{
 		{"no init", `package s`, 0},
 		{"registration without init", `package s
-import "heinzel/internal/platform/app"
+import "underling/internal/platform/app"
 func Init() { app.RegisterAutomation(nil) }`, 0},
 		{"init without registration", `package s
 func init() { println() }`, 0},
 		{"registration through a helper called from init", `package s
-import "heinzel/internal/platform/app"
+import "underling/internal/platform/app"
 func init() { register() }
 func register() { app.RegisterAutomation(nil) }`, 1},
 		{"dot import", `package s
-import . "heinzel/internal/platform/app"
+import . "underling/internal/platform/app"
 func init() { RegisterAutomation(nil) }`, 1},
 		{"bare call without dot import", `package s
 func init() { RegisterAutomation(nil) }
@@ -125,10 +125,10 @@ func RegisterAutomation(any) {}`, 0},
 import app "example.com/other"
 func init() { app.RegisterAutomation(nil) }`, 0},
 		{"state change", `package s
-import "heinzel/internal/platform/app"
+import "underling/internal/platform/app"
 func init() { app.RegisterStateChange(nil) }`, 1},
 		{"renamed import, both kinds", `package s
-import a "heinzel/internal/platform/app"
+import a "underling/internal/platform/app"
 func init() {
 	a.RegisterStateChange(nil)
 	a.RegisterAutomation(nil)
@@ -142,7 +142,7 @@ func init() {
 			}
 			// Registrations in a test file, or in a file the build excludes,
 			// don't wire the slice in.
-			register := "package s\nimport \"heinzel/internal/platform/app\"\nfunc init() { app.RegisterAutomation(nil) }"
+			register := "package s\nimport \"underling/internal/platform/app\"\nfunc init() { app.RegisterAutomation(nil) }"
 			for _, name := range []string{"s_test.go", "s_" + otherGOOS() + ".go"} {
 				if err := os.WriteFile(filepath.Join(dir, name), []byte(register), 0o644); err != nil {
 					t.Fatal(err)

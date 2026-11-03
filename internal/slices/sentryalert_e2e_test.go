@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/platform/app"
-	_ "heinzel/internal/slices" // registers every slice, as main does
+	"underling/internal/platform/app"
+	_ "underling/internal/slices" // registers every slice, as main does
 )
 
 const (
@@ -184,7 +184,7 @@ func TestSentryIssueAlertIsRecordedAndHandled(t *testing.T) {
 	const issueID = "1117540176"
 	body := `{"action":"triggered","data":{"event":{"event_id":"aa1deb2fc8ee4d5d9f2a6a2a4ae6c4c4","issue_id":"` + issueID +
 		`","project":1,"title":"ReferenceError: blooopy is not defined","level":"error"},"triggered_rule":"Very Important Alert Rule!"}}`
-	req, err := http.NewRequest(http.MethodPost, "http://heinzel.test/sentry/callback", strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, "http://underling.test/sentry/callback", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}

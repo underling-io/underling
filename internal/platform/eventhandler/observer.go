@@ -10,7 +10,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/platform/eventstore"
 )
 
 const batchSize = 100

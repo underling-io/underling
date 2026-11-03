@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"heinzel/internal/events"
+	"underling/internal/events"
 )
 
 // GitHub's limits; the body cap leaves headroom below GitHub's 65536.
@@ -15,7 +15,7 @@ const (
 )
 
 // prFooter ends every PR body.
-const prFooter = "\n\n---\nOpened by heinzel. Claude Code investigated the issue in a sandbox; review before merging.\n"
+const prFooter = "\n\n---\nOpened by underling. Claude Code investigated the issue in a sandbox; review before merging.\n"
 
 // prTitle names the Sentry issue.
 func prTitle(alert events.SentryIssueAlertReceived) string {

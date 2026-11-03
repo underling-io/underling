@@ -58,7 +58,7 @@ resource "aws_route_table_association" "public" {
 # The task's only ingress, 8080 from the ALB, is added in module.service.
 resource "aws_security_group" "task" {
   name        = "${var.name}-task"
-  description = "heinzel tasks"
+  description = "underling tasks"
   vpc_id      = aws_vpc.this.id
 
   tags = {

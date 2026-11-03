@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/slices/investigatesentryissue/claude"
+	"underling/internal/slices/investigatesentryissue/claude"
 )
 
 // The GWT tests fake a timeout with their own error type; this checks that

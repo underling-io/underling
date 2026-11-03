@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"heinzel/internal/events"
+	"underling/internal/events"
 )
 
 const zwsp = "\u200b"

@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/systemtest/upstreamfix"
+	"underling/internal/systemtest/upstreamfix"
 )
 
 const (
@@ -27,7 +27,7 @@ const (
 	noteInterval = 5 * time.Minute
 )
 
-func TestDeployedHeinzelFixesARealUpstreamBug(t *testing.T) {
+func TestDeployedUnderlingFixesARealUpstreamBug(t *testing.T) {
 	in, err := loadInputs(os.Getenv)
 	if err != nil {
 		t.Fatalf("post-deploy test inputs:\n%v", err)
@@ -58,7 +58,7 @@ func TestDeployedHeinzelFixesARealUpstreamBug(t *testing.T) {
 	upstreamfix.RequireBugReproduces(t, precondition, u)
 
 	alert := upstreamfix.Alert{EventID: newEventID(t), IssueID: strconv.FormatInt(time.Now().UnixMilli(), 10), Project: in.project}
-	branch := "heinzel/sentry-" + alert.IssueID
+	branch := "underling/sentry-" + alert.IssueID
 	posted := time.Now()
 	upstreamfix.PostAlert(t, in.baseURL+"/sentry/callback", in.secret, alert)
 	t.Logf("posted the alert: event %s, issue %s, project %d", alert.EventID, alert.IssueID, alert.Project)
@@ -74,7 +74,7 @@ func TestDeployedHeinzelFixesARealUpstreamBug(t *testing.T) {
 	}
 	upstreamfix.CheckFix(t, fixed, u)
 	upstreamfix.LogComparison(t, fixed, u)
-	t.Logf("heinzel's PR: %s (left open; the next run's reset closes it)", pr.HTMLURL)
+	t.Logf("underling's PR: %s (left open; the next run's reset closes it)", pr.HTMLURL)
 }
 
 // repository is what the test reads of the target repo.
@@ -111,19 +111,19 @@ func guardRepo(t *testing.T, gh *gitHub, name string) repository {
 
 // resetRepo makes repo's default branch u.Parent and nothing else, after
 // refusing to touch a repo with refs the test doesn't own or with history
-// other than go-version's. It closes the open PRs from heinzel/* branches
+// other than go-version's. It closes the open PRs from underling/* branches
 // and deletes those branches.
 func resetRepo(t *testing.T, gh *gitHub, repo repository, u upstreamfix.Upstream) {
 	t.Helper()
 	refs := gh.lsRemote(t, repo)
 	if bad := unexpectedRefs(refs, repo.DefaultBranch); len(bad) > 0 {
-		t.Fatalf("refusing to reset %s: it has refs besides HEAD, %s, heinzel/* and pull/*: %s",
+		t.Fatalf("refusing to reset %s: it has refs besides HEAD, %s, underling/* and pull/*: %s",
 			repo.FullName, repo.DefaultBranch, strings.Join(bad, ", "))
 	}
 	defaultRef := "refs/heads/" + repo.DefaultBranch
 	if hasHeads(refs) {
 		// Only a repo this test reset before (or an empty one) may be reset:
-		// heinzel only ever pushes heinzel/* branches, so the default branch
+		// underling only ever pushes underling/* branches, so the default branch
 		// still sits on go-version's parent of the fix.
 		if refs[defaultRef] != u.Parent {
 			t.Fatalf("refusing to reset %s: %s is at %q, not go-version's %s; only an empty repo or one this test reset can be reset",
@@ -136,13 +136,13 @@ func resetRepo(t *testing.T, gh *gitHub, repo repository, u upstreamfix.Upstream
 		}
 	}
 
-	for _, pr := range openHeinzelPRs(t, gh, repo) {
+	for _, pr := range openUnderlingPRs(t, gh, repo) {
 		gh.mustDo(t, http.MethodPatch, fmt.Sprintf("/repos/%s/pulls/%d", repo.FullName, pr.Number), map[string]string{"state": "closed"})
 		t.Logf("closed %s", pr.HTMLURL)
 	}
 
 	refspecs := []string{u.Parent + ":refs/heads/" + repo.DefaultBranch}
-	for _, branch := range heinzelBranches(refs) {
+	for _, branch := range underlingBranches(refs) {
 		refspecs = append(refspecs, ":"+branch)
 	}
 	// The lease ties the push to the default branch the guard saw (absent
@@ -156,15 +156,15 @@ func resetRepo(t *testing.T, gh *gitHub, repo repository, u upstreamfix.Upstream
 	t.Logf("reset %s: %s at %s", repo.FullName, repo.DefaultBranch, u.Parent)
 }
 
-// openHeinzelPRs returns repo's open PRs from its own heinzel/* branches.
-func openHeinzelPRs(t *testing.T, gh *gitHub, repo repository) []pullRequest {
+// openUnderlingPRs returns repo's open PRs from its own underling/* branches.
+func openUnderlingPRs(t *testing.T, gh *gitHub, repo repository) []pullRequest {
 	t.Helper()
 	var found []pullRequest
 	for page := 1; ; page++ {
 		var prs []pullRequest
 		gh.getJSON(t, fmt.Sprintf("/repos/%s/pulls?state=open&per_page=100&page=%d", repo.FullName, page), &prs)
 		for _, pr := range prs {
-			if pr.Head.Repo != nil && pr.Head.Repo.FullName == repo.FullName && strings.HasPrefix(pr.Head.Ref, "heinzel/") {
+			if pr.Head.Repo != nil && pr.Head.Repo.FullName == repo.FullName && strings.HasPrefix(pr.Head.Ref, "underling/") {
 				found = append(found, pr)
 			}
 		}
@@ -175,7 +175,7 @@ func openHeinzelPRs(t *testing.T, gh *gitHub, repo repository) []pullRequest {
 }
 
 // waitForPR polls for the PR from branch until the wait deadline, and
-// fails unless it is the open draft heinzel should have opened.
+// fails unless it is the open draft underling should have opened.
 func waitForPR(t *testing.T, gh *gitHub, repo repository, branch string, posted time.Time, onTimeout func(waited time.Duration) string) pullRequest {
 	t.Helper()
 	testDeadline, hasDeadline := t.Deadline()
@@ -206,7 +206,7 @@ func waitForPR(t *testing.T, gh *gitHub, repo repository, branch string, posted 
 			if len(prs) > 0 {
 				pr := prs[0]
 				if problems := prProblems(pr, repo.FullName, repo.DefaultBranch); len(problems) > 0 {
-					t.Fatalf("PR %s from %s isn't heinzel's draft:\n%s", pr.HTMLURL, branch, strings.Join(problems, "\n"))
+					t.Fatalf("PR %s from %s isn't underling's draft:\n%s", pr.HTMLURL, branch, strings.Join(problems, "\n"))
 				}
 				t.Logf("found draft PR %s after %v", pr.HTMLURL, time.Since(posted).Round(time.Second))
 				return pr

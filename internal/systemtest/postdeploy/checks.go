@@ -17,14 +17,14 @@ import (
 // postdeploy-tagged test does the I/O around them.
 
 const (
-	// maxWait bounds the wait for heinzel's draft PR after the alert.
+	// maxWait bounds the wait for underling's draft PR after the alert.
 	maxWait = 45 * time.Minute
 	// deadlineMargin leaves the verdict this much of go test's -timeout.
 	deadlineMargin = 3 * time.Minute
 
-	defaultLogGroup = "/ecs/heinzel"
+	defaultLogGroup = "/ecs/underling"
 	upstreamRepo    = "hashicorp/go-version"
-	heinzelPrefix   = "refs/heads/heinzel/"
+	underlingPrefix = "refs/heads/underling/"
 )
 
 // inputs is what the test reads from its environment.
@@ -141,15 +141,15 @@ func parseLsRemote(out string) (map[string]string, error) {
 }
 
 // unexpectedRefs returns, sorted, the refs the reset may not find: all
-// but HEAD, the default branch, heinzel/* branches and refs/pull/*. Tags
-// and other branches would reach heinzel's clone --bare and could hold
+// but HEAD, the default branch, underling/* branches and refs/pull/*. Tags
+// and other branches would reach underling's clone --bare and could hold
 // the fix.
 func unexpectedRefs(refs map[string]string, defaultBranch string) []string {
 	var bad []string
 	for ref := range refs {
 		switch {
 		case ref == "HEAD", ref == "refs/heads/"+defaultBranch,
-			strings.HasPrefix(ref, heinzelPrefix), strings.HasPrefix(ref, "refs/pull/"):
+			strings.HasPrefix(ref, underlingPrefix), strings.HasPrefix(ref, "refs/pull/"):
 		default:
 			bad = append(bad, ref)
 		}
@@ -158,11 +158,11 @@ func unexpectedRefs(refs map[string]string, defaultBranch string) []string {
 	return bad
 }
 
-// heinzelBranches returns the heinzel/* branches, sorted.
-func heinzelBranches(refs map[string]string) []string {
+// underlingBranches returns the underling/* branches, sorted.
+func underlingBranches(refs map[string]string) []string {
 	var branches []string
 	for ref := range refs {
-		if strings.HasPrefix(ref, heinzelPrefix) {
+		if strings.HasPrefix(ref, underlingPrefix) {
 			branches = append(branches, ref)
 		}
 	}
@@ -262,7 +262,7 @@ type pullRequest struct {
 	} `json:"base"`
 }
 
-// prProblems lists how pr differs from the draft PR heinzel should open
+// prProblems lists how pr differs from the draft PR underling should open
 // from repo against defaultBranch.
 func prProblems(pr pullRequest, repo, defaultBranch string) []string {
 	var problems []string
@@ -288,7 +288,7 @@ func prProblems(pr pullRequest, repo, defaultBranch string) []string {
 // timeoutMessage is the failure when no PR appeared in time.
 func timeoutMessage(repo, branch, issueID, logGroup string, project int64, waited time.Duration) string {
 	return fmt.Sprintf("no PR from %s appeared in %s within %v of posting the alert for issue %s.\n"+
-		"Read heinzel's logs for the run: aws logs tail %s --since 1h --filter-pattern '\"%s\"'\n"+
+		"Read underling's logs for the run: aws logs tail %s --since 1h --filter-pattern '\"%s\"'\n"+
 		"If the run ended as Skipped \"unmapped\", the deployment's sentry_github_repos doesn't map project %d to %s.",
 		branch, repo, formatDuration(waited), issueID, logGroup, issueID, project, repo)
 }

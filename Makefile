@@ -1,13 +1,13 @@
-BINARY := bin/heinzel-linux-arm64
+BINARY := bin/underling-linux-arm64
 
 # Container image (docs/event-model.md § Container image).
-IMAGE ?= heinzel
+IMAGE ?= underling
 # The 12-character HEAD commit, with a -dirty suffix when the tree has
 # uncommitted or untracked changes. image-push refuses a -dirty tag unless
 # IMAGE_TAG is set explicitly.
 IMAGE_TAG ?= $(shell git rev-parse --short=12 HEAD)$(shell [ -z "$$(git status --porcelain)" ] || echo -dirty)
 # The ECR repository image-push pushes to, e.g.
-# 123456789012.dkr.ecr.eu-central-1.amazonaws.com/heinzel.
+# 123456789012.dkr.ecr.eu-central-1.amazonaws.com/underling.
 ECR_REPOSITORY_URL ?=
 # Where Claude Code keeps installed plugins. image-context stages the newest
 # Codex and auto-task version dirs from it, the rule the system test uses.
@@ -19,7 +19,7 @@ PLUGIN_CACHE ?= $(HOME)/.claude/plugins/cache
 .PHONY: build-linux-arm64 check system-test postdeploy-test image-context image image-build image-push image-smoke infra-check clean
 
 build-linux-arm64:
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o $(BINARY) ./cmd/heinzel
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o $(BINARY) ./cmd/underling
 
 check:
 	go vet ./...
@@ -36,14 +36,14 @@ check:
 system-test:
 	go test -tags system -timeout 45m -v -count=1 ./internal/systemtest
 
-# Drives a deployed heinzel through its public webhook and checks the fix in
+# Drives a deployed underling through its public webhook and checks the fix in
 # a real GitHub repo (infra/README.md § Post-deploy system test). Costs
 # Bedrock tokens, takes up to an hour, and FORCE-PUSHES the target repo's
-# default branch, deleting its heinzel/* branches and closing their PRs.
+# default branch, deleting its underling/* branches and closing their PRs.
 # Needs POSTDEPLOY_BASE_URL (https), SENTRY_CLIENT_SECRET,
 # POSTDEPLOY_SENTRY_PROJECT_ID, POSTDEPLOY_GITHUB_REPO (owner/name of a
 # throwaway repo) and POSTDEPLOY_GITHUB_TOKEN (never GITHUB_TOKEN);
-# optionally POSTDEPLOY_LOG_GROUP (default /ecs/heinzel).
+# optionally POSTDEPLOY_LOG_GROUP (default /ecs/underling).
 postdeploy-test:
 	go test -tags postdeploy -timeout 60m -v -count=1 ./internal/systemtest/postdeploy
 
@@ -53,8 +53,8 @@ postdeploy-test:
 image-context: build-linux-arm64
 	rm -rf bin/image
 	mkdir -p bin/image/plugins
-	cp $(BINARY) bin/image/heinzel
-	cp deploy/image/heinzel-sandbox-probe bin/image/
+	cp $(BINARY) bin/image/underling
+	cp deploy/image/underling-sandbox-probe bin/image/
 	@set -e; : > bin/image/plugin-versions.mk; \
 	for p in openai-codex/codex:codex:CODEX auto-task/at:at:AT; do \
 		dir=$${p%%:*}; rest=$${p#*:}; name=$${rest%%:*}; var=$${rest#*:}; \

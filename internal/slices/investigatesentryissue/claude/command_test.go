@@ -17,8 +17,8 @@ func testConfig() Config {
 		PluginDirs: []string{"/p/codex", "/p/auto-task"},
 		Bin:        "/opt/claude/bin/claude",
 		Path:       "/usr/bin:/bin",
-		ParentHome: "/home/heinzel",
-		DenyRead:   []string{"/srv/heinzel-data"},
+		ParentHome: "/home/underling",
+		DenyRead:   []string{"/srv/underling-data"},
 		Readable:   []string{"/p/codex", "/p/auto-task", "/opt/claude/bin"},
 	}
 }
@@ -144,8 +144,8 @@ func TestSandboxSettingsSandboxTheClone(t *testing.T) {
 			"disableBypassPermissionsMode": "disable",
 			"deny": []any{
 				"Read(//proc/**)",
-				"Read(//home/heinzel/**)",
-				"Read(//srv/heinzel-data/**)",
+				"Read(//home/underling/**)",
+				"Read(//srv/underling-data/**)",
 				"Read(//w/old-run/**)",
 				"Read(//w/run/mirror.git/**)",
 				"Read(//w/run/git-home/**)",
@@ -158,7 +158,7 @@ func TestSandboxSettingsSandboxTheClone(t *testing.T) {
 			"allowUnsandboxedCommands": false,
 			"filesystem": map[string]any{
 				"allowWrite": []any{"/w/run/repo", "/w/run/home"},
-				"denyRead":   []any{"/home/heinzel", "/srv/heinzel-data", "/w"},
+				"denyRead":   []any{"/home/underling", "/srv/underling-data", "/w"},
 				"allowRead":  []any{"/w/run/repo", "/w/run/home", "/w/run/claude-config", "/p/codex", "/p/auto-task", "/opt/claude/bin"},
 			},
 			"network": map[string]any{"allowedDomains": []any{"api.openai.com"}},
@@ -196,13 +196,13 @@ func TestSandboxSettingsDenySymlinkedPathsAndTheirTargets(t *testing.T) {
 	}
 	cfg := testConfig()
 	cfg.ParentHome = link
-	cfg.DenyRead = []string{link, "/srv/heinzel-data"}
+	cfg.DenyRead = []string{link, "/srv/underling-data"}
 	got := sandboxSettings(cfg, testDirs())
 
-	if want := []string{link, resolved, "/srv/heinzel-data", "/w"}; !slices.Equal(got.Sandbox.Filesystem.DenyRead, want) {
+	if want := []string{link, resolved, "/srv/underling-data", "/w"}; !slices.Equal(got.Sandbox.Filesystem.DenyRead, want) {
 		t.Errorf("denyRead = %q, want %q", got.Sandbox.Filesystem.DenyRead, want)
 	}
-	wantRules := []string{"Read(//proc/**)", readDenyRule(link), readDenyRule(resolved), "Read(//srv/heinzel-data/**)"}
+	wantRules := []string{"Read(//proc/**)", readDenyRule(link), readDenyRule(resolved), "Read(//srv/underling-data/**)"}
 	if len(got.Permissions.Deny) < len(wantRules) || !slices.Equal(got.Permissions.Deny[:len(wantRules)], wantRules) {
 		t.Errorf("deny = %q, want it to start with %q", got.Permissions.Deny, wantRules)
 	}

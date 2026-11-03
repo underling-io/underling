@@ -22,7 +22,7 @@ The `investigatesentryissue` slice is hard for humans to follow: business decisi
   - failed for each stage: clone, claude, timeout, push (including CI config changes), pr
   - failed shutdown while running
   - alert picked up during shutdown → no events
-- **Infrastructure keeps its tests.** The safety properties stay tested where they're implemented: sandbox settings, child env, token never on disk, git timeouts, stray branches, CI paths, PR title and body caps, work dir checks. Fake-`claude` end-to-end tests shrink to a small set (happy path to a draft PR, child env holding no heinzel secrets).
+- **Infrastructure keeps its tests.** The safety properties stay tested where they're implemented: sandbox settings, child env, token never on disk, git timeouts, stray branches, CI paths, PR title and body caps, work dir checks. Fake-`claude` end-to-end tests shrink to a small set (happy path to a draft PR, child env holding no underling secrets).
 - **No behaviour change.** Event types and payloads, stream names, handler name, config variables, log lines and the e2e test stay as they are.
 
 ### Notes
@@ -74,7 +74,7 @@ Keep the decisions (skip, dedupe, start, outcome and failure stage) in the slice
    - Cover every outcome listed in the ACs. Where it's the point of the rule, also assert the fake saw no clone (skips, duplicate), no push (CI config) or no PR (no changes).
 5. **Prune and relocate the existing tests.**
    - Delete fake-claude tests in `investigator_test.go` that the GWT tests now cover.
-   - Keep two end-to-end tests through `New` with real git and the re-exec'd fake claude: the happy path to a draft PR, and the child env holding no heinzel secrets. The restart-dedupe and work-dir tests through `New` may stay if cheap.
+   - Keep two end-to-end tests through `New` with real git and the re-exec'd fake claude: the happy path to a draft PR, and the child env holding no underling secrets. The restart-dedupe and work-dir tests through `New` may stay if cheap.
    - Move these to the sub-packages as direct tests of that code: stray-branch semantics (other branch, renamed, deleted, merged helper), the child's git config not affecting the push, timeout and shutdown kill, session-init failure, grandchild and git pipe waits.
    - The re-exec fake-claude helper may be duplicated where both packages need it.
 6. **Docs.** Update the package doc comment and the investigate section of `docs/event-model.md` where it names files or layout.

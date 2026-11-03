@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"heinzel/internal/events"
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/events"
+	"underling/internal/platform/eventstore"
 )
 
 // handlerName is the handler's checkpoint key; never change it.
@@ -17,7 +17,7 @@ const handlerName = "sentry-issue-investigator"
 
 // investigator investigates each new Sentry issue once.
 type investigator struct {
-	ctx    context.Context // cancelled when heinzel shuts down
+	ctx    context.Context // cancelled when underling shuts down
 	store  *eventstore.Store
 	logger *slog.Logger
 	// staleBefore is the handler's start minus the max age. Alerts stored
@@ -40,7 +40,7 @@ type run interface {
 	// out of time, timedOut(err) holds.
 	claude(ctx context.Context, prompt string) (summary string, err error)
 	// strayBranches lists the branches besides the investigation branch
-	// that hold commits heinzel won't push.
+	// that hold commits underling won't push.
 	strayBranches(ctx context.Context) ([]string, error)
 	// newCommits counts the investigation branch's new commits. It runs
 	// after strayBranches.
@@ -95,7 +95,7 @@ func (h *investigator) Handle(e eventstore.Event) {
 		// A Started now could only end as Failed shutdown, which is final.
 		// The runner still checkpoints past the alert, so only a later
 		// alert for the issue starts it.
-		log.Info("heinzel is shutting down; sentry issue alert left unhandled")
+		log.Info("underling is shutting down; sentry issue alert left unhandled")
 		return
 	}
 	branch := branchName(alert.IssueID)
@@ -110,7 +110,7 @@ func (h *investigator) Handle(e eventstore.Event) {
 }
 
 // investigate clones target, lets Claude work on branch, and pushes it and
-// opens a draft PR if Claude committed a fix. Once heinzel shuts down, any
+// opens a draft PR if Claude committed a fix. Once underling shuts down, any
 // failure is a shutdown failure.
 func (h *investigator) investigate(alert events.SentryIssueAlertReceived, target repo, branch string) outcome {
 	ctx := h.ctx
@@ -140,7 +140,7 @@ func (h *investigator) investigate(alert events.SentryIssueAlertReceived, target
 		return fail(events.InvestigationFailedClaude, fmt.Errorf("collect claude's commits: %w", err))
 	}
 	if len(stray) > 0 {
-		return fail(events.InvestigationFailedClaude, fmt.Errorf("claude committed on branches other than %s, which heinzel doesn't push: %s", branch, strings.Join(stray, ", ")))
+		return fail(events.InvestigationFailedClaude, fmt.Errorf("claude committed on branches other than %s, which underling doesn't push: %s", branch, strings.Join(stray, ", ")))
 	}
 	commits, err := run.newCommits(ctx)
 	if err != nil {
@@ -155,7 +155,7 @@ func (h *investigator) investigate(alert events.SentryIssueAlertReceived, target
 		return fail(events.InvestigationFailedPush, err)
 	}
 	if ci := ciConfigPaths(changed); len(ci) > 0 {
-		return fail(events.InvestigationFailedPush, fmt.Errorf("changes CI configuration, so heinzel won't push it: %s", strings.Join(firstN(ci, maxListedPaths), ", ")))
+		return fail(events.InvestigationFailedPush, fmt.Errorf("changes CI configuration, so underling won't push it: %s", strings.Join(firstN(ci, maxListedPaths), ", ")))
 	}
 	if err := run.push(ctx); err != nil {
 		return fail(events.InvestigationFailedPush, err)

@@ -1,7 +1,7 @@
 # Copy to terraform.tfvars (gitignored) and fill in.
 
 aws_region     = "eu-central-1"
-domain_name    = "heinzel.example.com"
+domain_name    = "underling.example.com"
 hosted_zone_id = "Z0123456789ABCDEFGHIJ"
 
 # The tag make image-push pushed; tags are immutable.

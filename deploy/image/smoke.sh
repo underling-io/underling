@@ -1,8 +1,8 @@
 #!/bin/sh
-# smoke.sh IMAGE runs the heinzel image locally with dummy Bedrock config,
+# smoke.sh IMAGE runs the underling image locally with dummy Bedrock config,
 # using only container settings Fargate allows (no --privileged, no
 # --security-opt, no capabilities beyond SYS_PTRACE), and checks that:
-#   1. heinzel logs "app started" within 30s, with no sandbox warning;
+#   1. underling logs "app started" within 30s, with no sandbox warning;
 #   2. GET /healthz returns 200;
 #   3. the sandbox probe passes.
 # Checks 1-2 failing exits 1. A probe failure is a warning (exit 0) unless
@@ -15,7 +15,7 @@ image=${1:?usage: smoke.sh IMAGE}
 # returns an id. The EXIT trap removes only a container this run created
 # (armed only after checking the name is free), and
 # the signal traps turn a signal into an exit, so it runs then too.
-name=heinzel-smoke-$$-$(date +%s)
+name=underling-smoke-$$-$(date +%s)
 created=0
 trap '[ "$created" -eq 1 ] && docker rm -f "$name" >/dev/null 2>&1' EXIT
 trap 'exit 129' HUP
@@ -72,7 +72,7 @@ else
 	failed=1
 fi
 
-if docker exec "$name" heinzel-sandbox-probe; then
+if docker exec "$name" underling-sandbox-probe; then
 	echo "PASS: sandbox probe"
 else
 	echo "FAIL: sandbox probe"

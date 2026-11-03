@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"heinzel/internal/slices/investigatesentryissue/claude"
+	"underling/internal/slices/investigatesentryissue/claude"
 )
 
 // validEnv holds every required variable with a valid value.
@@ -59,9 +59,9 @@ func TestLoadConfigReadsEveryVariable(t *testing.T) {
 		"INVESTIGATION_TIMEOUT":   "90s",
 		"INVESTIGATION_MAX_AGE":   "15m",
 		"CLAUDE_BIN":              "/opt/claude",
-		"INVESTIGATION_WORK_DIR":  "/var/heinzel",
-		"INVESTIGATION_DENY_READ": " /srv/data , /etc/heinzel/ ",
-		"HOME":                    "/home/heinzel/",
+		"INVESTIGATION_WORK_DIR":  "/var/underling",
+		"INVESTIGATION_DENY_READ": " /srv/data , /etc/underling/ ",
+		"HOME":                    "/home/underling/",
 		"GITHUB_API_URL":          "http://127.0.0.1:8080/api/",
 		"GITHUB_CLONE_URL":        "/srv/remotes/",
 	}))
@@ -75,13 +75,13 @@ func TestLoadConfigReadsEveryVariable(t *testing.T) {
 	if want := []string{"/p/codex", "/p/auto-task"}; !reflect.DeepEqual(got.pluginDirs, want) {
 		t.Errorf("pluginDirs = %v, want %v", got.pluginDirs, want)
 	}
-	if want := []string{"/srv/data", "/etc/heinzel"}; !reflect.DeepEqual(got.denyRead, want) || got.parentHome != "/home/heinzel" {
-		t.Errorf("denyRead = %q and parentHome = %q, want %q and /home/heinzel", got.denyRead, got.parentHome, want)
+	if want := []string{"/srv/data", "/etc/underling"}; !reflect.DeepEqual(got.denyRead, want) || got.parentHome != "/home/underling" {
+		t.Errorf("denyRead = %q and parentHome = %q, want %q and /home/underling", got.denyRead, got.parentHome, want)
 	}
 	if got.apiURL != "http://127.0.0.1:8080/api/" || got.cloneBase != "/srv/remotes/" {
 		t.Errorf("apiURL = %q and cloneBase = %q, want http://127.0.0.1:8080/api/ and /srv/remotes/", got.apiURL, got.cloneBase)
 	}
-	if got.timeout != 90*time.Second || got.maxAge != 15*time.Minute || got.claudeBin != "/opt/claude" || got.workDir != "/var/heinzel" {
+	if got.timeout != 90*time.Second || got.maxAge != 15*time.Minute || got.claudeBin != "/opt/claude" || got.workDir != "/var/underling" {
 		t.Errorf("got %+v", got)
 	}
 }

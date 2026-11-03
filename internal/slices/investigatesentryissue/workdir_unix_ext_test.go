@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"heinzel/internal/slices/investigatesentryissue"
+	"underling/internal/slices/investigatesentryissue"
 )
 
 func TestNewRejectsAnExistingWorkDirOthersCanUse(t *testing.T) {

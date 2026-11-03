@@ -25,5 +25,5 @@ func streamID(issueID string) string {
 
 // branchName names the branch Claude works on for an issue.
 func branchName(issueID string) string {
-	return "heinzel/sentry-" + issueKey(issueID)
+	return "underling/sentry-" + issueKey(issueID)
 }

@@ -6,13 +6,13 @@ import (
 	"reflect"
 	"testing"
 
-	"heinzel/internal/events"
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/events"
+	"underling/internal/platform/eventstore"
 )
 
 var everyContract = []events.Event{
 	events.SentryIssueAlertReceived{EventID: "e1", IssueID: "42", Project: 7, Frames: []events.SentryStackFrame{{File: "a.go", Function: "f", Line: 3}}},
-	events.SentryIssueInvestigationStarted{IssueID: "42", Project: 7, Repo: "srf/app", Branch: "heinzel/42"},
+	events.SentryIssueInvestigationStarted{IssueID: "42", Project: 7, Repo: "srf/app", Branch: "underling/42"},
 	events.SentryIssueInvestigationPullRequestOpened{IssueID: "42", PRURL: "https://example.test/pr/1"},
 	events.SentryIssueInvestigationNoChanges{IssueID: "42"},
 	events.SentryIssueInvestigationSkipped{IssueID: "42", Reason: events.InvestigationSkippedStale},

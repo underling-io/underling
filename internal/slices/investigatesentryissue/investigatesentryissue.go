@@ -27,11 +27,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
-	"heinzel/internal/platform/app"
-	"heinzel/internal/platform/eventhandler"
-	"heinzel/internal/platform/eventstore"
-	"heinzel/internal/slices/investigatesentryissue/github"
-	"heinzel/internal/slices/investigatesentryissue/workspace"
+	"underling/internal/platform/app"
+	"underling/internal/platform/eventhandler"
+	"underling/internal/platform/eventstore"
+	"underling/internal/slices/investigatesentryissue/github"
+	"underling/internal/slices/investigatesentryissue/workspace"
 )
 
 func init() {

@@ -16,7 +16,7 @@ import (
 
 const (
 	testToken  = "ghp-test-token-4f2a9c"
-	testBranch = "heinzel/sentry-1"
+	testBranch = "underling/sentry-1"
 )
 
 // git runs git in dir and returns its trimmed output.
@@ -287,7 +287,7 @@ func TestAHelperBranchMergedIntoTheBranchIsNotStray(t *testing.T) {
 
 func TestTheChildsGitConfigDoesNotAffectThePush(t *testing.T) {
 	ws, remote := newTestWorkspace(t)
-	// Redirect the GitHub remote through the child's HOME, which heinzel's
+	// Redirect the GitHub remote through the child's HOME, which underling's
 	// own git must not read.
 	hostile := "[url \"" + filepath.Join(ws.RunDir, "nowhere.git") + "\"]\n\tinsteadOf = " + remote + "\n"
 	if err := os.WriteFile(filepath.Join(ws.Home, ".gitconfig"), []byte(hostile), 0o644); err != nil {
@@ -361,7 +361,7 @@ func TestGitTimeouts(t *testing.T) {
 		{[]string{"fetch", "--quiet", "/w/run/repo", "+refs/heads/x:refs/heads/x"}, 10 * time.Minute},
 		{[]string{"-c", "core.hooksPath=/dev/null", "push", "--quiet", "origin", "x"}, 10 * time.Minute},
 		{[]string{"rev-list", "--count", "a..b"}, time.Minute},
-		{[]string{"-c", "x=y", "config", "user.name", "heinzel"}, time.Minute},
+		{[]string{"-c", "x=y", "config", "user.name", "underling"}, time.Minute},
 	}
 	for _, tt := range tests {
 		if got := g.timeout(tt.args); got != tt.want {

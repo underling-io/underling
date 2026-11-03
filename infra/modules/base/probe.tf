@@ -19,7 +19,7 @@ resource "aws_ecs_task_definition" "probe" {
       name      = var.name
       image     = "${aws_ecr_repository.this.repository_url}:${var.image_tag}"
       essential = true
-      command   = ["heinzel-sandbox-probe"]
+      command   = ["underling-sandbox-probe"]
 
       linuxParameters = {
         initProcessEnabled = true

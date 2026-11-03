@@ -11,7 +11,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/pelletier/go-toml/v2"
 
-	"heinzel/internal/slices/investigatesentryissue/claude"
+	"underling/internal/slices/investigatesentryissue/claude"
 )
 
 // retrieveTimeout bounds how long a run waits for AWS credentials.
@@ -57,7 +57,7 @@ func runCredentials(ctx context.Context, cache aws.CredentialsProvider, timeout 
 	return claude.AWSCredentials{AccessKeyID: creds.AccessKeyID, SecretAccessKey: creds.SecretAccessKey, SessionToken: creds.SessionToken}, nil
 }
 
-// codexConfig is the Codex config.toml heinzel writes for a Bedrock run.
+// codexConfig is the Codex config.toml underling writes for a Bedrock run.
 type codexConfig struct {
 	Model          string                   `toml:"model"`
 	ModelProvider  string                   `toml:"model_provider"`

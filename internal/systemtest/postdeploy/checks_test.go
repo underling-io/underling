@@ -12,10 +12,10 @@ import (
 
 func validEnv() map[string]string {
 	return map[string]string{
-		"POSTDEPLOY_BASE_URL":          "https://heinzel.example.com",
+		"POSTDEPLOY_BASE_URL":          "https://underling.example.com",
 		"SENTRY_CLIENT_SECRET":         "sentry-secret",
 		"POSTDEPLOY_SENTRY_PROJECT_ID": "42",
-		"POSTDEPLOY_GITHUB_REPO":       "acme/heinzel-target",
+		"POSTDEPLOY_GITHUB_REPO":       "acme/underling-target",
 		"POSTDEPLOY_GITHUB_TOKEN":      "github_pat_test",
 	}
 }
@@ -27,17 +27,17 @@ func env(overrides map[string]string) func(string) string {
 }
 
 func TestLoadInputs(t *testing.T) {
-	got, err := loadInputs(env(map[string]string{"POSTDEPLOY_BASE_URL": "https://heinzel.example.com/"}))
+	got, err := loadInputs(env(map[string]string{"POSTDEPLOY_BASE_URL": "https://underling.example.com/"}))
 	if err != nil {
 		t.Fatalf("loadInputs: %v", err)
 	}
 	want := inputs{
-		baseURL:  "https://heinzel.example.com",
+		baseURL:  "https://underling.example.com",
 		secret:   "sentry-secret",
 		project:  42,
-		repo:     "acme/heinzel-target",
+		repo:     "acme/underling-target",
 		token:    "github_pat_test",
-		logGroup: "/ecs/heinzel",
+		logGroup: "/ecs/underling",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
@@ -80,19 +80,19 @@ func TestLoadInputsRejects(t *testing.T) {
 	for _, tc := range []struct {
 		name, variable, value string
 	}{
-		{"http base URL", "POSTDEPLOY_BASE_URL", "http://heinzel.example.com"},
-		{"relative base URL", "POSTDEPLOY_BASE_URL", "heinzel.example.com"},
-		{"base URL with a path", "POSTDEPLOY_BASE_URL", "https://heinzel.example.com/sentry/callback"},
-		{"base URL with a query", "POSTDEPLOY_BASE_URL", "https://heinzel.example.com/?x=1"},
-		{"base URL with a fragment", "POSTDEPLOY_BASE_URL", "https://heinzel.example.com/#x"},
-		{"base URL with user info", "POSTDEPLOY_BASE_URL", "https://u:p@heinzel.example.com"},
+		{"http base URL", "POSTDEPLOY_BASE_URL", "http://underling.example.com"},
+		{"relative base URL", "POSTDEPLOY_BASE_URL", "underling.example.com"},
+		{"base URL with a path", "POSTDEPLOY_BASE_URL", "https://underling.example.com/sentry/callback"},
+		{"base URL with a query", "POSTDEPLOY_BASE_URL", "https://underling.example.com/?x=1"},
+		{"base URL with a fragment", "POSTDEPLOY_BASE_URL", "https://underling.example.com/#x"},
+		{"base URL with user info", "POSTDEPLOY_BASE_URL", "https://u:p@underling.example.com"},
 		{"base URL without a host", "POSTDEPLOY_BASE_URL", "https:///"},
 		{"zero project", "POSTDEPLOY_SENTRY_PROJECT_ID", "0"},
 		{"negative project", "POSTDEPLOY_SENTRY_PROJECT_ID", "-3"},
 		{"non-numeric project", "POSTDEPLOY_SENTRY_PROJECT_ID", "web"},
-		{"repo without owner", "POSTDEPLOY_GITHUB_REPO", "heinzel-target"},
-		{"repo with extra part", "POSTDEPLOY_GITHUB_REPO", "acme/heinzel/target"},
-		{"repo as URL", "POSTDEPLOY_GITHUB_REPO", "https://github.com/acme/heinzel-target"},
+		{"repo without owner", "POSTDEPLOY_GITHUB_REPO", "underling-target"},
+		{"repo with extra part", "POSTDEPLOY_GITHUB_REPO", "acme/underling/target"},
+		{"repo as URL", "POSTDEPLOY_GITHUB_REPO", "https://github.com/acme/underling-target"},
 		{"repo dot-dot", "POSTDEPLOY_GITHUB_REPO", "acme/.."},
 		{"upstream repo", "POSTDEPLOY_GITHUB_REPO", "hashicorp/go-version"},
 		{"upstream repo in other case", "POSTDEPLOY_GITHUB_REPO", "HashiCorp/Go-Version"},
@@ -131,19 +131,19 @@ func TestParseLsRemote(t *testing.T) {
 
 func TestUnexpectedRefs(t *testing.T) {
 	refs := map[string]string{
-		"HEAD":                        parent,
-		"refs/heads/main":             parent,
-		"refs/heads/heinzel/sentry-1": other,
-		"refs/pull/3/head":            other,
-		"refs/pull/3/merge":           other,
-		"refs/heads/feature":          other,
-		"refs/heads/heinzelx":         other,
-		"refs/tags/v1.0.0":            other,
-		"refs/tags/v1.0.0^{}":         other,
-		"refs/notes/commits":          other,
+		"HEAD":                          parent,
+		"refs/heads/main":               parent,
+		"refs/heads/underling/sentry-1": other,
+		"refs/pull/3/head":              other,
+		"refs/pull/3/merge":             other,
+		"refs/heads/feature":            other,
+		"refs/heads/underlingx":         other,
+		"refs/tags/v1.0.0":              other,
+		"refs/tags/v1.0.0^{}":           other,
+		"refs/notes/commits":            other,
 	}
 	got := unexpectedRefs(refs, "main")
-	want := []string{"refs/heads/feature", "refs/heads/heinzelx", "refs/notes/commits", "refs/tags/v1.0.0", "refs/tags/v1.0.0^{}"}
+	want := []string{"refs/heads/feature", "refs/heads/underlingx", "refs/notes/commits", "refs/tags/v1.0.0", "refs/tags/v1.0.0^{}"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -152,16 +152,16 @@ func TestUnexpectedRefs(t *testing.T) {
 	}
 }
 
-func TestHeinzelBranches(t *testing.T) {
+func TestUnderlingBranches(t *testing.T) {
 	refs := map[string]string{
-		"HEAD":                        parent,
-		"refs/heads/main":             parent,
-		"refs/heads/heinzel/sentry-2": other,
-		"refs/heads/heinzel/sentry-1": other,
-		"refs/pull/1/head":            other,
+		"HEAD":                          parent,
+		"refs/heads/main":               parent,
+		"refs/heads/underling/sentry-2": other,
+		"refs/heads/underling/sentry-1": other,
+		"refs/pull/1/head":              other,
 	}
-	got := heinzelBranches(refs)
-	want := []string{"refs/heads/heinzel/sentry-1", "refs/heads/heinzel/sentry-2"}
+	got := underlingBranches(refs)
+	want := []string{"refs/heads/underling/sentry-1", "refs/heads/underling/sentry-2"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -185,7 +185,7 @@ func TestCheckResetRefs(t *testing.T) {
 		"no HEAD":           {"refs/heads/main": parent},
 		"no default branch": {"HEAD": parent},
 		"default elsewhere": {"HEAD": other, "refs/heads/main": other},
-		"heinzel left":      {"HEAD": parent, "refs/heads/main": parent, "refs/heads/heinzel/sentry-1": other},
+		"underling left":    {"HEAD": parent, "refs/heads/main": parent, "refs/heads/underling/sentry-1": other},
 		"a tag":             {"HEAD": parent, "refs/heads/main": parent, "refs/tags/v1": parent},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -277,10 +277,10 @@ func TestPRProblems(t *testing.T) {
 }
 
 func TestTimeoutMessage(t *testing.T) {
-	got := timeoutMessage("acme/target", "heinzel/sentry-17", "17", "/ecs/heinzel", 42, 45*time.Minute)
+	got := timeoutMessage("acme/target", "underling/sentry-17", "17", "/ecs/underling", 42, 45*time.Minute)
 	for _, want := range []string{
-		"acme/target", "heinzel/sentry-17", "45m",
-		`aws logs tail /ecs/heinzel --since 1h --filter-pattern '"17"'`,
+		"acme/target", "underling/sentry-17", "45m",
+		`aws logs tail /ecs/underling --since 1h --filter-pattern '"17"'`,
 		"unmapped", "42",
 	} {
 		if !strings.Contains(got, want) {

@@ -13,7 +13,7 @@ Rename `internal/agent` to `internal/app` (package `app`). It holds the slice ki
 
 - `internal/agent` no longer exists. `internal/app` holds the same code and tests with the same exported names (`app.StateChange`, `app.Automation`, `app.Slices`, `app.Deps`, `app.RegisterStateChange`, `app.RegisterAutomation`, `app.Build`, `app.Run`, `app.Config`, `app.ParseFlags`), and its behaviour doesn't change.
 - Every reference to the package or the running process says "app" instead of "agent": imports, call sites, identifiers, comments, test names and helpers, docs, error messages from the slice tests, and the lifecycle log messages ("app started", "app shutting down", "app stopped with error"). Historical task files are left alone. `grep -rniI agent cmd internal docs` returns nothing.
-- `make check` passes, and the slice import guard and registration test accept `heinzel/internal/app` in place of `heinzel/internal/agent`.
+- `make check` passes, and the slice import guard and registration test accept `underling/internal/app` in place of `underling/internal/agent`.
 
 ### Notes
 
@@ -26,8 +26,8 @@ Rename `internal/agent` to `internal/app` (package `app`). It holds the slice ki
 
 1. **Already done** (commits `8399165`, `16b9938`): `git mv internal/agent internal/app`, plus `agent.go` / `agent_test.go` renamed to `app.go` / `app_test.go`. The contents still say `package agent`.
 2. **`internal/app`:** change the package clause to `app` and the external test package to `app_test`. Update the package doc, the comments and the three lifecycle log messages. Rename test helpers and test names that say agent.
-3. **Callers:** update the import path and qualifier everywhere: `cmd/heinzel/main.go`, both slices, and the tests in `internal/slices` (e2e test, registration test, slicedirs fixtures, import guard allowlist). In `registration_test.go`, the `agentPath` constant becomes `appPath`, the default qualifier `"agent"` becomes `"app"`, and the `agentName` identifiers and messages change to match. The "same name on another package" fixture should use alias `app`, so it still tests a look-alike.
-4. **Docs:** update `docs/event-model.md` and the comments in `gen.go`, `doc.go` and `generated_test.go`. The `cmd/heinzel/main.go` doc becomes "runs the event-sourced app".
+3. **Callers:** update the import path and qualifier everywhere: `cmd/underling/main.go`, both slices, and the tests in `internal/slices` (e2e test, registration test, slicedirs fixtures, import guard allowlist). In `registration_test.go`, the `agentPath` constant becomes `appPath`, the default qualifier `"agent"` becomes `"app"`, and the `agentName` identifiers and messages change to match. The "same name on another package" fixture should use alias `app`, so it still tests a look-alike.
+4. **Docs:** update `docs/event-model.md` and the comments in `gen.go`, `doc.go` and `generated_test.go`. The `cmd/underling/main.go` doc becomes "runs the event-sourced app".
 5. **Check:** `grep -rniI agent cmd internal docs` returns nothing. `go vet ./...` passes. `go run gen.go -o $TMPDIR/x.go` from `internal/slices` still matches `slices_gen.go`. The e2e test passes.
 
 ### Notes

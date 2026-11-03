@@ -12,8 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"heinzel/internal/platform/eventhandler"
-	"heinzel/internal/platform/eventstore"
+	"underling/internal/platform/eventhandler"
+	"underling/internal/platform/eventstore"
 )
 
 const readHeaderTimeout = 10 * time.Second
@@ -33,7 +33,7 @@ type Config struct {
 // errors go to output.
 func ParseFlags(args []string, output io.Writer) (Config, error) {
 	var cfg Config
-	fs := flag.NewFlagSet("heinzel", flag.ContinueOnError)
+	fs := flag.NewFlagSet("underling", flag.ContinueOnError)
 	fs.SetOutput(output)
 	fs.StringVar(&cfg.Addr, "addr", ":8080", "HTTP listen address")
 	fs.StringVar(&cfg.DataDir, "data-dir", "./data", "directory holding the event store")
