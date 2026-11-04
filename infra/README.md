@@ -25,6 +25,12 @@ task starts empty.
 `validate` and `tofu test` (a plan against a mocked AWS provider). It needs
 network access to the OpenTofu registry, but no AWS credentials.
 
+`make infra-apply` applies this directory to AWS: it runs `tofu init` (with
+`-backend-config=s3.tfbackend` when `infra/s3.tfbackend` exists) and then
+`tofu apply`, which shows the plan and asks before changing anything. It
+refuses to start without `infra/terraform.tfvars`. Extra apply flags go in
+`TOFU_APPLY_ARGS`.
+
 ## Prerequisites
 
 - OpenTofu 1.12, AWS CLI v2, Docker and jq.
@@ -39,8 +45,7 @@ network access to the OpenTofu registry, but no AWS credentials.
 
 ## Inputs
 
-Copy `terraform.tfvars.example` to `terraform.tfvars` (gitignored) and fill
-it in. Each model, region, repo and timeout variable maps 1:1 onto the
+Fill in `terraform.tfvars` (committed). Each model, region, repo and timeout variable maps 1:1 onto the
 container env var of the same name in upper case. A `null` optional leaves
 the env var out, so the app's default holds.
 
@@ -86,8 +91,7 @@ they say `make`, which runs from the repo root, and `AWS_REGION` set to
 ### 1. Everything but the service
 
 ```sh
-tofu init
-tofu apply -exclude=module.service
+make infra-apply TOFU_APPLY_ARGS=-exclude=module.service
 ```
 
 This creates the network, ECR, the cluster, the roles, the log group, the
@@ -161,7 +165,7 @@ ECS reads the secrets when a task starts. After changing one later, run
 ### 5. Apply the rest
 
 ```sh
-tofu apply
+make infra-apply
 ```
 
 This creates the certificate, the ALB, DNS and the service, and waits until
@@ -182,11 +186,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://<domain>/sentry/callback   # 40
 ```sh
 make image image-push ECR_REPOSITORY_URL=$(tofu -chdir=infra output -raw ecr_repository_url)
 # set image_tag = "<new tag>" in infra/terraform.tfvars, then:
-tofu -chdir=infra apply
+make infra-apply
 ```
 
 `make image` tags with the 12-character `HEAD` commit; use that tag. Keep
-it in terraform.tfvars, not `-var`: a later plain `tofu apply` would
+it in terraform.tfvars, not `-var`: a later plain `make infra-apply` would
 otherwise roll the service back to the tag still in the file. To check
 that the old task stopped before the new one started (`stoppedAt` of the old
 earlier than `createdAt` of the new):

@@ -16,7 +16,7 @@ PLUGIN_CACHE ?= $(HOME)/.claude/plugins/cache
 # Written by image-context; read by image-build.
 -include bin/image/plugin-versions.mk
 
-.PHONY: build-linux-arm64 check system-test postdeploy-test image-context image image-build image-push image-smoke infra-check clean
+.PHONY: build-linux-arm64 check system-test postdeploy-test image-context image image-build image-push image-smoke infra-check infra-apply clean
 
 build-linux-arm64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o $(BINARY) ./cmd/underling
@@ -106,6 +106,13 @@ image-push:
 image-smoke: image
 	deploy/image/smoke.sh $(IMAGE):$(IMAGE_TAG)
 
+# The AWS CLI profile infra-check and infra-apply run under (tofu and the S3
+# backend both read AWS_PROFILE). Set here, it beats an AWS_PROFILE already in
+# the environment; override it on the command line: make infra-apply
+# INFRA_AWS_PROFILE=other.
+INFRA_AWS_PROFILE := uar-prd
+infra-check infra-apply: export AWS_PROFILE = $(INFRA_AWS_PROFILE)
+
 # Needs OpenTofu and network to registry.opentofu.org (provider download),
 # but no AWS credentials: checks the infra/ code's formatting, validates it,
 # and runs its tests against a mocked AWS provider. Not part of check.
@@ -114,6 +121,20 @@ infra-check:
 	tofu -chdir=infra fmt -check -recursive
 	tofu -chdir=infra validate
 	tofu -chdir=infra test
+
+# Needs OpenTofu, AWS credentials and infra/terraform.tfvars. Applies infra/
+# to AWS (infra/README.md); tofu shows the plan and asks before changing
+# anything. Uses infra/s3.tfbackend as backend config when it exists. Extra
+# apply flags go in TOFU_APPLY_ARGS, e.g. the first deploy's
+# TOFU_APPLY_ARGS=-exclude=module.service.
+TOFU_APPLY_ARGS ?=
+infra-apply:
+	@if [ ! -f infra/terraform.tfvars ]; then \
+		echo "infra/terraform.tfvars is missing" >&2; \
+		exit 1; \
+	fi
+	tofu -chdir=infra init -input=false -lockfile=readonly $(if $(wildcard infra/s3.tfbackend),-backend-config=s3.tfbackend)
+	tofu -chdir=infra apply $(TOFU_APPLY_ARGS)
 
 clean:
 	rm -rf bin

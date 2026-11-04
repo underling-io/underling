@@ -1,4 +1,4 @@
-# Copy to terraform.tfvars (gitignored) and fill in.
+# Committed. Fill in before make infra-apply.
 
 aws_region     = "eu-central-1"
 domain_name    = "underling.example.com"
