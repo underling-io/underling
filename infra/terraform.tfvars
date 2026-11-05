@@ -1,8 +1,8 @@
 # Committed. Fill in before make infra-apply.
 
 aws_region     = "eu-central-1"
-domain_name    = "underling.example.com"
-hosted_zone_id = "Z0123456789ABCDEFGHIJ"
+domain_name    = "underling.sandbox.up-and-running.sh"
+hosted_zone_id = "Z00066393LVA7L2US33PG"
 
 # The tag make image-push pushed; tags are immutable.
 image_tag = "0123456789ab"
