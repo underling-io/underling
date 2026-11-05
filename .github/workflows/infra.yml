@@ -8,8 +8,14 @@ on:
       - .github/workflows/infra.yml
   push:
     branches: [main]
-    # Code and inputs only: docs and tests don't deploy.
+    # Code and inputs only: docs and tests don't deploy. App changes deploy
+    # too: every deploy builds and pushes the image for HEAD.
     paths:
+      - cmd/**
+      - internal/**
+      - deploy/**
+      - go.mod
+      - go.sum
       - infra/**/*.tf
       - infra/terraform.tfvars
       - infra/.terraform.lock.hcl
@@ -36,7 +42,8 @@ jobs:
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    # arm64 runner: the image is linux/arm64, so it builds natively, no QEMU.
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       id-token: write
@@ -91,5 +98,41 @@ jobs:
           tofu -chdir=infra fmt -check -recursive
           tofu -chdir=infra validate
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The image bundles the Codex and auto-task plugins. Locally they come
+      # from Claude Code's plugin cache; here we lay out the same
+      # <dir>/<name>/<version> tree from the pinned upstream commits.
+      - name: Stage plugins
+        run: |
+          set -euo pipefail
+          cache="$RUNNER_TEMP/plugin-cache"
+          clone() { # repo sha dest
+            git clone --quiet "https://github.com/$1.git" "$RUNNER_TEMP/src-$$"
+            git -C "$RUNNER_TEMP/src-$$" checkout --quiet "$2"
+            mkdir -p "$(dirname "$3")"
+            cp -R "$RUNNER_TEMP/src-$$/${4:-.}" "$3"
+            rm -rf "$3/.git" "$RUNNER_TEMP/src-$$"
+          }
+          clone openai/codex-plugin-cc db52e28f4d9ded852ab3942cea316258ae4ef346 "$cache/openai-codex/codex/1.0.6" plugins/codex
+          clone patforna/auto-task 69cf9e8bcac06308166d1e254b92304b3cda5787 "$cache/auto-task/at/0.1.0"
+          echo "PLUGIN_CACHE=$cache" >> "$GITHUB_ENV"
+
+      - name: Build and push the image
+        run: |
+          set -euo pipefail
+          tag="$(git rev-parse --short=12 HEAD)"
+          repo="$(tofu -chdir=infra output -raw ecr_repository_url)"
+          echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
+          # Tags are immutable: a re-run of the same commit reuses the image.
+          if aws ecr describe-images --repository-name "${repo##*/}" --image-ids "imageTag=$tag" >/dev/null 2>&1; then
+            echo "image $tag is already in ECR"
+          else
+            make image IMAGE_TAG="$tag"
+            make image-push ECR_REPOSITORY_URL="$repo" IMAGE_TAG="$tag"
+          fi
+
       - name: Apply
-        run: tofu -chdir=infra apply -input=false -auto-approve
+        run: tofu -chdir=infra apply -input=false -auto-approve -var "image_tag=$IMAGE_TAG"

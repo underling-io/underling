@@ -240,8 +240,14 @@ Set these up once:
 - The role needs the permissions of a local `make infra-apply`, plus
   read/write on the state bucket.
 
-The workflow applies whatever `image_tag` `terraform.tfvars` holds; it
-neither builds nor pushes images. The first deploy stays manual ([First
+Before each apply the workflow builds the image for the pushed commit (the
+12-character `HEAD` sha), pushes it to ECR unless that tag is already there,
+and applies with `-var image_tag=<sha>`, so the `image_tag` in
+`terraform.tfvars` only matters for local applies. It runs on an arm64
+runner and takes the Codex and auto-task plugins from their pinned upstream
+commits, listed in the workflow. App code changes (`cmd/`, `internal/`,
+`deploy/`, `go.mod`, `go.sum`) trigger it too. The ECR repository must
+already exist, so the first deploy stays manual. The first deploy stays manual ([First
 deploy](#first-deploy)).
 
 ## Post-deploy system test
