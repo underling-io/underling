@@ -1,0 +1,98 @@
+name: infra
+
+on:
+  pull_request:
+    paths:
+      - infra/**
+      - Makefile
+      - .github/workflows/infra.yml
+  push:
+    branches: [main]
+    # Code and inputs only: docs and tests don't deploy.
+    paths:
+      - infra/**/*.tf
+      - infra/terraform.tfvars
+      - infra/.terraform.lock.hcl
+      - .github/workflows/infra.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TOFU_VERSION: 1.12.x
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+      - run: make infra-check
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    # One deploy at a time; a running apply is never cancelled (only the newest queued run is kept).
+    concurrency:
+      group: infra-deploy
+      cancel-in-progress: false
+    env:
+      AWS_REGION: eu-central-1
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_REGION: ${{ vars.TF_STATE_REGION || 'eu-central-1' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require the state bucket
+        run: |
+          if [ -z "$TF_STATE_BUCKET" ]; then
+            echo "::error::Repository variable TF_STATE_BUCKET is not set. CI needs S3 state (infra/README.md § Deploying from GitHub Actions)."
+            exit 1
+          fi
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::945752100213:role/github-actions/github-actions-deploy-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure the S3 backend
+        working-directory: infra
+        run: |
+          cat > backend_override.tf <<'HCL'
+          terraform {
+            backend "s3" {}
+          }
+          HCL
+          cat > s3.tfbackend <<HCL
+          bucket       = "${TF_STATE_BUCKET}"
+          key          = "underling/terraform.tfstate"
+          region       = "${TF_STATE_REGION}"
+          use_lockfile = true
+          HCL
+
+      - name: Init
+        run: tofu -chdir=infra init -input=false -lockfile=readonly -backend-config=s3.tfbackend
+
+      - name: Check
+        run: |
+          tofu -chdir=infra fmt -check -recursive
+          tofu -chdir=infra validate
+
+      - name: Plan
+        run: tofu -chdir=infra plan -input=false -out=tfplan
+
+      - name: Apply
+        run: tofu -chdir=infra apply -input=false tfplan

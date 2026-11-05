@@ -205,6 +205,45 @@ aws ecs describe-tasks --cluster underling \
 Expect a short window with no receiver. A failed deploy rolls back on its
 own (circuit breaker). To roll back by hand, apply the old tag.
 
+## Deploying from GitHub Actions
+
+`.github/workflows/infra.yml` checks and deploys `infra/`:
+
+- **Pull requests** touching `infra/`, the Makefile or the workflow run
+  `make infra-check`, with no AWS credentials. The check is path-filtered, so
+  don't make it a required status check.
+- **Pushes to `main`** touching `infra/**/*.tf`, `terraform.tfvars`, the lock
+  file or the workflow (docs and tests don't deploy), and manual runs from
+  `main`, assume
+  `arn:aws:iam::945752100213:role/github-actions/github-actions-deploy-role`
+  through OIDC, run `tofu init`, `fmt -check` and `validate`, then
+  `tofu plan` (printed in the log) and apply that plan without asking. One
+  deploy runs at a time and a running apply is never cancelled; of the queued
+  runs only the newest is kept.
+
+Set these up once:
+
+- The repository variable `TF_STATE_BUCKET`: an S3 bucket for state (in
+  `eu-central-1`, or set `TF_STATE_REGION`). Set it only after
+  `terraform.tfvars` holds real values: its committed placeholders would
+  otherwise be applied on the next push. The
+  workflow writes `backend_override.tf` and `s3.tfbackend` itself (key
+  `underling/terraform.tfstate`, `use_lockfile = true`), so it needs no
+  committed backend. Without the variable the deploy job fails up front,
+  because local state in CI would be lost. If you applied locally first,
+  migrate that state with the [State](#state) steps, using the same bucket
+  and key.
+- The role's trust policy must allow `token.actions.githubusercontent.com`
+  with `aud` `sts.amazonaws.com` and `sub`
+  `repo:underling-io/underling:ref:refs/heads/main`. The job uses
+  no GitHub `environment`, which would change the `sub` claim.
+- The role needs the permissions of a local `make infra-apply`, plus
+  read/write on the state bucket.
+
+The workflow applies whatever `image_tag` `terraform.tfvars` holds; it
+neither builds nor pushes images. The first deploy stays manual ([First
+deploy](#first-deploy)).
+
 ## Post-deploy system test
 
 `make postdeploy-test` drives the deployed underling end to end. It resets a
