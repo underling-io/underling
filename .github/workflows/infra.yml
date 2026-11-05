@@ -92,4 +92,4 @@ jobs:
           tofu -chdir=infra validate
 
       - name: Apply
-        run: tofu -chdir=infra apply -input=false
+        run: tofu -chdir=infra apply -input=false -auto-approve
