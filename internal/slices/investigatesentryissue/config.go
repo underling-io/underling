@@ -3,6 +3,7 @@ package investigatesentryissue
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -284,7 +285,9 @@ func parseDuration(value string, def time.Duration) (time.Duration, error) {
 	return d, nil
 }
 
-// parseBytes parses a positive number of bytes, or returns def for "".
+// parseBytes parses a positive number of bytes, or returns def for "". The
+// most it takes is one less than the largest int64: a reader of the limit
+// reads one byte past it.
 func parseBytes(value string, def int64) (int64, error) {
 	if value == "" {
 		return def, nil
@@ -295,6 +298,9 @@ func parseBytes(value string, def int64) (int64, error) {
 	}
 	if n <= 0 {
 		return 0, fmt.Errorf("%s is not positive", value)
+	}
+	if n > math.MaxInt64-1 {
+		return 0, fmt.Errorf("%s is larger than the most, %d", value, int64(math.MaxInt64-1))
 	}
 	return n, nil
 }

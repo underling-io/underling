@@ -251,7 +251,7 @@ The slice reads these when it is built. Any invalid value fails startup with
 | `CLAUDE_PLUGIN_DIRS` | yes | comma-separated plugin dirs (the Codex and auto-task plugins), each passed as `--plugin-dir` | |
 | `INVESTIGATION_TIMEOUT` | no | positive Go duration | `30m` |
 | `INVESTIGATION_MAX_AGE` | no | positive Go duration | `1h` |
-| `INVESTIGATION_MAX_BUNDLE_BYTES` | no | positive integer: the largest git bundle, in bytes, underling takes back from a [runner](#runner) | `1073741824` (1 GiB) |
+| `INVESTIGATION_MAX_BUNDLE_BYTES` | no | positive integer of at most 9223372036854775806: the largest git bundle, in bytes, underling takes back from a [runner](#runner) | `1073741824` (1 GiB) |
 | `CLAUDE_BIN` | no | path or name of the `claude` executable | `claude` |
 | `INVESTIGATION_WORK_DIR` | no | directory for the per-run dirs, created (0700) if missing; the child may read only its own run's clone, HOME and Claude config dir in it | `underling-investigations-<uid>` in the OS temp dir (`underling-investigations` on Windows) |
 | `INVESTIGATION_DENY_READ` | no | comma-separated absolute paths the child may not read, such as underling's data dir | |

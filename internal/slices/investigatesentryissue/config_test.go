@@ -2,6 +2,7 @@ package investigatesentryissue
 
 import (
 	"maps"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -140,6 +141,19 @@ func TestLoadConfigRejectsInvalidValues(t *testing.T) {
 				t.Fatalf("got error %v, want one naming %s", err, tt.variable)
 			}
 		})
+	}
+}
+
+func TestLoadConfigCapsTheBundleLimitBelowTheLargestInt64(t *testing.T) {
+	// underling reads one byte past the limit to notice a larger bundle.
+	_, err := loadConfig(with(map[string]string{"INVESTIGATION_MAX_BUNDLE_BYTES": "9223372036854775807"}))
+	if want := "INVESTIGATION_MAX_BUNDLE_BYTES: 9223372036854775807 is larger than the most, 9223372036854775806"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("got error %v, want %q", err, want)
+	}
+
+	got, err := loadConfig(with(map[string]string{"INVESTIGATION_MAX_BUNDLE_BYTES": "9223372036854775806"}))
+	if err != nil || got.maxBundle != math.MaxInt64-1 {
+		t.Errorf("got maxBundle %d and error %v, want the largest value accepted", got.maxBundle, err)
 	}
 }
 
