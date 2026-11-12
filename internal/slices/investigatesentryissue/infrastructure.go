@@ -69,6 +69,10 @@ func (r *workspaceRun) changedPaths(ctx context.Context) ([]string, error) {
 
 func (r *workspaceRun) push(ctx context.Context) error { return r.ws.Push(ctx) }
 
+// redact returns text as it is: a run in underling's process has no
+// secrets of its own.
+func (r *workspaceRun) redact(text string) string { return text }
+
 func (r *workspaceRun) defaultBranch() string { return r.ws.DefaultBranch }
 
 func (r *workspaceRun) remove() {

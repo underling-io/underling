@@ -643,13 +643,19 @@ clone yet, bundling failed, the runner was stopped).
   `runner` for what fails before the runner's container runs.
 - **Redaction.** The result is untrusted, and Claude can read the run's
   URLs in the runner, so underling doesn't rely on the runner's redaction.
-  It replaces each URL the launcher returned as `Secrets`, and each one's
-  query, with `[redacted]` (the `contract` package's `Redact`, the same
-  code the runner uses) in the summary, in a `failed` result's `reason` and
-  in the text of every launcher, download and bundle error, before any of
-  them reaches an event, a log line or a PR. It matches the exact text
-  only: a URL that Claude re-encoded or split is not recognised, and
-  neither is one in a commit of the bundle.
+  It keeps the URLs the launcher returned as `Secrets` for as long as the
+  investigation runs and replaces each, and each one's query, with
+  `[redacted]` (the `contract` package's `Redact`, the same code the
+  runner uses) where the investigation publishes: in the `reason` of every
+  Failed event after the launch, whatever its stage, in the log lines that
+  carry text of the run, and in the PR's title and body (the summary
+  before it is cut to fit). That covers the launcher, download and bundle
+  errors and a `failed` result's `reason`, and also what git reads out of
+  the bundle later: a query is a valid branch name and file name, so a
+  stray branch, a changed CI config path or a git error can name one. It
+  matches the exact text only: a URL that Claude re-encoded or split is
+  not recognised. And it can't reach content inside the commits: what
+  Claude committed is pushed as it is.
 - **Limits of git.** `git bundle` commands time out after 10 minutes, like
   clone, fetch and push.
 
@@ -719,9 +725,10 @@ What Claude can reach in the runner:
   stray-branch, no-commits and CI-config checks as for an in-process run,
   before anything is pushed. A result Claude wrote can also name the URLs,
   which the runner's own redaction never sees; underling therefore
-  replaces the URLs the launcher reported, and their queries, in the
-  summary, the reason and every error text of the run before it stores,
-  logs or publishes them (see **Redaction** under [Runner](#runner)).
+  replaces the URLs the launcher reported, and their queries, in every
+  failure reason, log line and PR text of the investigation, the names of
+  the bundle's branches and paths included, before it stores, logs or
+  publishes them (see **Redaction** under [Runner](#runner)).
 - **AWS credentials.** It has the runner's AWS credentials in its own
   environment and can reach the credential endpoint the runner got them
   from. Scope the runner's role to Bedrock invoke only, as

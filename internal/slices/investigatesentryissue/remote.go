@@ -29,9 +29,10 @@ type RunnerLauncher interface {
 type RunnerOutput struct {
 	// Secrets are the URLs the launcher gave the runner, or signed for
 	// itself, to move the run's files. Claude can read the runner's, so a
-	// result may name them. underling replaces each, and each one's query,
-	// in the summary, the result's reason and every error of the run
-	// before it logs, stores or publishes them. The launcher sets them
+	// result may name them, and so may a branch or a path of the bundle.
+	// underling replaces each, and each one's query, in whatever the
+	// investigation logs, stores or publishes from then on: every failure
+	// reason, the PR and the run's own log lines. The launcher sets them
 	// with an error too.
 	Secrets []string
 	// Result opens the result file.
@@ -79,14 +80,18 @@ type remoteRun struct {
 	issueID  string
 	logger   *slog.Logger
 	release  func() // the launched runner's, or nil
+	// secrets are the launched runner's (RunnerOutput.Secrets), as
+	// contract.Secrets returned them. They last as long as the run:
+	// what git reads out of the runner's bundle can name them too.
+	secrets []string
 }
 
 func (r *remoteRun) inputBundle() string  { return filepath.Join(r.ws.RunDir, "input.bundle") }
 func (r *remoteRun) outputBundle() string { return filepath.Join(r.ws.RunDir, "output.bundle") }
 
-// claude runs the runner and takes its output into the mirror. Neither the
-// summary nor an error shows one of the run's URLs
-// (RunnerOutput.Secrets).
+// claude runs the runner and takes its output into the mirror. The summary
+// and the errors may show one of the run's URLs (RunnerOutput.Secrets);
+// the caller passes them through redact, like everything else of the run.
 //
 // Every error but the runner's own timeout result is flattened to text: a
 // git or net error that reports Timeout would otherwise pass for Claude
@@ -99,27 +104,26 @@ func (r *remoteRun) claude(ctx context.Context, prompt string) (string, error) {
 		Timeout: r.cfg.timeout,
 		Bedrock: contract.Bedrock{Region: b.region, Model: b.model, SmallFastModel: b.smallFastModel, CodexModel: b.codexModel, CodexRegion: b.codexRegion},
 	}, r.inputBundle(), prompt)
-	secrets := contract.Secrets(out.Secrets...)
-	redact := func(text string) string { return contract.Redact(text, secrets) }
+	r.secrets = contract.Secrets(out.Secrets...)
 	if err != nil {
-		return "", fmt.Errorf("run the runner: %s", redact(err.Error()))
+		return "", fmt.Errorf("run the runner: %s", err.Error())
 	}
 	r.release = out.Release
 
 	result, err := readResult(ctx, out)
 	if err != nil {
-		return "", errors.New(redact(err.Error()))
+		return "", errors.New(err.Error())
 	}
 	switch result.Status {
 	case contract.StatusTimeout:
 		return "", &claude.TimeoutError{After: r.cfg.timeout}
 	case contract.StatusFailed:
-		return "", errors.New(redact(result.Reason))
+		return "", errors.New(result.Reason)
 	}
 	if err := r.takeBundle(ctx, out); err != nil {
-		return "", errors.New(redact(err.Error()))
+		return "", errors.New(err.Error())
 	}
-	return redact(result.Summary), nil
+	return result.Summary, nil
 }
 
 // readResult reads and checks the runner's result, at most
@@ -181,6 +185,9 @@ func (r *remoteRun) changedPaths(ctx context.Context) ([]string, error) {
 
 func (r *remoteRun) push(ctx context.Context) error { return r.ws.Push(ctx) }
 
+// redact returns text with the launched runner's secrets replaced.
+func (r *remoteRun) redact(text string) string { return contract.Redact(text, r.secrets) }
+
 func (r *remoteRun) defaultBranch() string { return r.ws.DefaultBranch }
 
 func (r *remoteRun) remove() {
@@ -188,6 +195,6 @@ func (r *remoteRun) remove() {
 		r.release()
 	}
 	if err := r.ws.Remove(); err != nil {
-		r.logger.Error("remove investigation workspace", "handler", handlerName, "issueId", r.issueID, "dir", r.ws.RunDir, "error", err)
+		r.logger.Error("remove investigation workspace", "handler", handlerName, "issueId", r.issueID, "dir", r.ws.RunDir, "error", r.redact(err.Error()))
 	}
 }

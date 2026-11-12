@@ -259,15 +259,25 @@ func forgedResult(t *testing.T, status contract.Status) func() io.Reader {
 // fixBundle returns the input bundle's branches plus the investigation
 // branch with one commit.
 func fixBundle(t *testing.T) func(inputBundle string) io.Reader {
+	return commitBundle(t, branch, "fix.txt")
+}
+
+// commitBundle returns the input bundle's branches plus onBranch with one
+// commit, which adds path.
+func commitBundle(t *testing.T, onBranch, path string) func(inputBundle string) io.Reader {
 	return func(inputBundle string) io.Reader {
 		dir := t.TempDir()
 		clone := filepath.Join(dir, "clone")
 		git(t, dir, "clone", "-q", inputBundle, clone)
-		git(t, clone, "checkout", "-q", "-b", branch)
-		if err := os.WriteFile(filepath.Join(clone, "fix.txt"), []byte("fixed\n"), 0o644); err != nil {
+		git(t, clone, "checkout", "-q", "-b", onBranch)
+		file := filepath.Join(clone, path)
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		git(t, clone, "add", "fix.txt")
+		if err := os.WriteFile(file, []byte("fixed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, clone, "add", path)
 		git(t, clone, "commit", "-q", "-m", "Fix it")
 		out := filepath.Join(dir, "out.bundle")
 		git(t, clone, "bundle", "create", "-q", out, "--branches")
@@ -335,6 +345,40 @@ func TestRunnerFailuresNamingTheSignedURLsAreRecordedWithoutThem(t *testing.T) {
 			h.assertStream(startedThenOutcome(events.SentryIssueInvestigationFailedType), &f)
 			assertNoSignedURL(t, "the Failed event", f.Reason)
 			assertNoSignedURL(t, "the log", h.logText())
+		})
+	}
+}
+
+// A signed URL's query is a valid git branch name and a valid file name, so
+// a bundle Claude made in the runner can carry one where a result can't.
+func TestABundleNamingASignedURLIsRecordedWithoutIt(t *testing.T) {
+	tests := []struct {
+		name   string
+		bundle func(inputBundle string) io.Reader
+		stage  string
+		reason string
+	}{
+		{"as a stray branch", commitBundle(t, "X-Amz-Signature=s3cr3t-result", "fix.txt"),
+			"claude", "claude committed on branches other than " + branch + ", which underling doesn't push: [redacted]"},
+		{"as a changed CI config path", commitBundle(t, branch, ".github/X-Amz-Signature=s3cr3t-bundle"),
+			"push", "changes CI configuration, so underling won't push it: .github/[redacted]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := &cannedLauncher{secrets: signedURLs, result: resultOf(okResult), bundle: tt.bundle}
+			h := newHarness(t, modeNoop, runnerMode(l, &fakeAWS{err: errors.New("no AWS")})...)
+
+			h.handler.Handle(alert(5, 1, now))
+
+			assertFailed(t, h, tt.stage, tt.reason)
+			var f events.SentryIssueInvestigationFailed
+			h.assertStream(startedThenOutcome(events.SentryIssueInvestigationFailedType), &f)
+			assertNoSignedURL(t, "the Failed event", f.Reason)
+			assertNoSignedURL(t, "the log", h.logText())
+			if len(h.github.recorded()) != 0 {
+				t.Error("a PR was opened")
+			}
+			h.assertNoLeftovers()
 		})
 	}
 }
