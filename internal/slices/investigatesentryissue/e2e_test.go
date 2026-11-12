@@ -101,8 +101,9 @@ type harness struct {
 
 // setup is what options change before New runs.
 type setup struct {
-	env map[string]string
-	aws aws.CredentialsProvider
+	env    map[string]string
+	aws    aws.CredentialsProvider
+	runner investigatesentryissue.RunnerLauncher
 }
 
 type option func(s *setup)
@@ -151,6 +152,7 @@ func newHarness(t *testing.T, mode string, opts ...option) *harness {
 		HTTPClient: &http.Client{Transport: h.github},
 		Now:        func() time.Time { return h.clock },
 		AWS:        s.aws,
+		Runner:     s.runner,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

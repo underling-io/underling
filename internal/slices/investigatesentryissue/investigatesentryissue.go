@@ -13,6 +13,12 @@
 // It reaches git, Claude and GitHub through small interfaces, which
 // infrastructure.go implements with the sub-packages workspace (the clone
 // and git), claude (the sandboxed child) and github (the draft PR).
+//
+// With Params.Runner set, Claude runs in a runner instead, a process of
+// its own elsewhere: remote.go packs the repo into a git bundle for it and
+// takes its result and its bundle back, as the contract sub-package
+// defines them. The runner sub-package is that process's program
+// (cmd/underling-runner); underling's half never imports it.
 package investigatesentryissue
 
 import (
@@ -57,6 +63,9 @@ type Params struct {
 	// AWS, in Bedrock mode, is where runs get their AWS credentials; New
 	// caches them. nil means the AWS SDK's default chain.
 	AWS aws.CredentialsProvider
+	// Runner, if set, runs each investigation's Claude step in a runner
+	// instead of in a child process of underling's. It needs Bedrock mode.
+	Runner RunnerLauncher
 }
 
 // New returns the slice, or an error if its config is invalid.
@@ -77,18 +86,9 @@ func New(p Params) (app.Automation, error) {
 			return app.Automation{}, fmt.Errorf("%s: %w", workDirEnvVar, err)
 		}
 	}
-	if err := resolveReadPaths(&cfg); err != nil {
+	cloner, err := newCloner(p, cfg)
+	if err != nil {
 		return app.Automation{}, err
-	}
-	var credentials aws.CredentialsProvider
-	if cfg.bedrock != nil {
-		if credentials, err = bedrock.NewCredentialsCache(context.Background(), p.AWS, cfg.bedrock.region, cfg.timeout); err != nil {
-			return app.Automation{}, err
-		}
-	}
-	for _, d := range deniedPathDirs(cfg) {
-		p.Logger.Warn("PATH entry lies under a path the child may not read; tools there won't run inside the sandbox",
-			"handler", handlerName, "dir", d.dir, "denied", d.denied)
 	}
 	return app.Automation{
 		Handler: func(ctx context.Context, store *eventstore.Store) eventhandler.Handler {
@@ -98,9 +98,37 @@ func New(p Params) (app.Automation, error) {
 				logger:      p.Logger,
 				staleBefore: p.Now().Add(-cfg.maxAge),
 				repos:       cfg.repos,
-				cloner:      &workspaceCloner{cfg: cfg, aws: credentials, logger: p.Logger},
+				cloner:      cloner,
 				prs:         githubPROpener{&github.Client{APIURL: cfg.apiURL, Token: cfg.githubToken, HTTP: p.HTTPClient}},
 			}
 		},
 	}, nil
+}
+
+// newCloner returns what runs the investigations' Claude step: a runner
+// through p.Runner, or a sandboxed child process of underling's.
+func newCloner(p Params, cfg config) (cloner, error) {
+	if p.Runner != nil {
+		// The runner gets its own AWS credentials and has no sandbox, so
+		// neither underling's credentials nor the read paths matter here.
+		if cfg.bedrock == nil {
+			return nil, fmt.Errorf("%s: must be \"1\" to run investigations in a runner", useBedrockEnvVar)
+		}
+		return &remoteCloner{cfg: cfg, launcher: p.Runner, logger: p.Logger}, nil
+	}
+	if err := resolveReadPaths(&cfg); err != nil {
+		return nil, err
+	}
+	var credentials aws.CredentialsProvider
+	if cfg.bedrock != nil {
+		var err error
+		if credentials, err = bedrock.NewCredentialsCache(context.Background(), p.AWS, cfg.bedrock.region, cfg.timeout); err != nil {
+			return nil, err
+		}
+	}
+	for _, d := range deniedPathDirs(cfg) {
+		p.Logger.Warn("PATH entry lies under a path the child may not read; tools there won't run inside the sandbox",
+			"handler", handlerName, "dir", d.dir, "denied", d.denied)
+	}
+	return &workspaceCloner{cfg: cfg, aws: credentials, logger: p.Logger}, nil
 }

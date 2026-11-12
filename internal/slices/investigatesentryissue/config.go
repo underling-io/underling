@@ -23,6 +23,7 @@ const (
 	pluginDirsEnvVar = "CLAUDE_PLUGIN_DIRS"
 	timeoutEnvVar    = contract.TimeoutEnvVar
 	maxAgeEnvVar     = "INVESTIGATION_MAX_AGE"
+	maxBundleEnvVar  = "INVESTIGATION_MAX_BUNDLE_BYTES"
 	claudeBinEnvVar  = "CLAUDE_BIN"
 	workDirEnvVar    = "INVESTIGATION_WORK_DIR"
 	denyReadEnvVar   = "INVESTIGATION_DENY_READ"
@@ -53,11 +54,14 @@ type config struct {
 	pluginDirs  []string
 	timeout     time.Duration
 	maxAge      time.Duration
-	claudeBin   string
-	workDir     string // "" until New picks the default
-	path        string // the child's PATH: underling's own
-	parentHome  string // underling's HOME, or ""; the child may not read it
-	denyRead    []string
+	// maxBundle is the largest bundle, in bytes, underling takes back from
+	// a runner.
+	maxBundle  int64
+	claudeBin  string
+	workDir    string // "" until New picks the default
+	path       string // the child's PATH: underling's own
+	parentHome string // underling's HOME, or ""; the child may not read it
+	denyRead   []string
 	// readable are the paths under denied ones that sandboxed commands
 	// still need: the plugin dirs and the claude binary's dir. Set by
 	// resolveReadPaths.
@@ -130,6 +134,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 	check(timeoutEnvVar, err)
 	cfg.maxAge, err = parseDuration(getenv(maxAgeEnvVar), time.Hour)
 	check(maxAgeEnvVar, err)
+	cfg.maxBundle, err = parseBytes(getenv(maxBundleEnvVar), 1<<30)
+	check(maxBundleEnvVar, err)
 	cfg.denyRead, err = parsePaths(getenv(denyReadEnvVar))
 	check(denyReadEnvVar, err)
 	cfg.apiURL, err = parseAPIURL(getenv(apiURLEnvVar))
@@ -276,6 +282,21 @@ func parseDuration(value string, def time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s is not positive", value)
 	}
 	return d, nil
+}
+
+// parseBytes parses a positive number of bytes, or returns def for "".
+func parseBytes(value string, def int64) (int64, error) {
+	if value == "" {
+		return def, nil
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%q is not a number of bytes", value)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("%s is not positive", value)
+	}
+	return n, nil
 }
 
 // parseAPIURL parses an absolute http(s) URL without credentials, query or
