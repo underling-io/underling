@@ -288,3 +288,37 @@ func TestSandboxSettingsInBedrockModeAllowOnlyCodexsBedrockHost(t *testing.T) {
 		t.Errorf("Bedrock mode changed more than the network: %+v", got)
 	}
 }
+
+// -p silently ignores settings that fail validation, which would drop the
+// allow rules while the init check still passes. So the unsandboxed
+// settings are pinned byte for byte, with no null or empty key.
+func TestUnsandboxedSettingsAreExactlyTheCheckedOnes(t *testing.T) {
+	const want = `{"permissions":{"defaultMode":"acceptEdits","disableBypassPermissionsMode":"disable","allow":["Bash","Read","Edit"]},"sandbox":{"enabled":false}}`
+
+	got, err := json.Marshal(unsandboxedSettings())
+
+	if err != nil || string(got) != want {
+		t.Fatalf("settings = %s, %v; want %s", got, err, want)
+	}
+}
+
+func TestUnsandboxedCommandDiffersFromCommandOnlyInItsSettings(t *testing.T) {
+	cfg := bedrockConfig("aws-session")
+	sandboxed, err := Command(cfg, testDirs(), "the prompt")
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	settings, _ := json.Marshal(unsandboxedSettings())
+	want := sandboxed
+	want.args = slices.Clone(sandboxed.args)
+	want.args[slices.Index(want.args, "--settings")+1] = string(settings)
+
+	got, err := UnsandboxedCommand(cfg, testDirs(), "the prompt")
+
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("UnsandboxedCommand = %+v, %v; want %+v", got, err, want)
+	}
+	if mode := got.args[slices.Index(got.args, "--permission-mode")+1]; mode != got.permissionMode || mode != "acceptEdits" {
+		t.Errorf("--permission-mode %q, init check expects %q", mode, got.permissionMode)
+	}
+}

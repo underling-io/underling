@@ -30,6 +30,7 @@ import (
 	"underling/internal/platform/app"
 	"underling/internal/platform/eventhandler"
 	"underling/internal/platform/eventstore"
+	"underling/internal/slices/investigatesentryissue/bedrock"
 	"underling/internal/slices/investigatesentryissue/github"
 	"underling/internal/slices/investigatesentryissue/workspace"
 )
@@ -81,7 +82,7 @@ func New(p Params) (app.Automation, error) {
 	}
 	var credentials aws.CredentialsProvider
 	if cfg.bedrock != nil {
-		if credentials, err = newCredentialsCache(context.Background(), p.AWS, cfg.bedrock.region, cfg.timeout); err != nil {
+		if credentials, err = bedrock.NewCredentialsCache(context.Background(), p.AWS, cfg.bedrock.region, cfg.timeout); err != nil {
 			return app.Automation{}, err
 		}
 	}

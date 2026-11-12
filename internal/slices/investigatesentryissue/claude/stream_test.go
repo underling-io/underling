@@ -71,7 +71,7 @@ func TestCheckInit(t *testing.T) {
 	}{
 		{"as configured", good, ""},
 		{"missing", func() *initEvent { return nil }, "no system/init event"},
-		{"other permission mode", func() *initEvent { e := good(); e.PermissionMode = "default"; return e }, `permission mode "default"`},
+		{"other permission mode", func() *initEvent { e := good(); e.PermissionMode = "default"; return e }, `permission mode "default", not acceptEdits`},
 		{"plugin missing", func() *initEvent { e := good(); e.Plugins = e.Plugins[:1]; return e }, "no plugin loaded from /p/at"},
 		{"plugin errors", func() *initEvent {
 			e := good()
@@ -81,7 +81,7 @@ func TestCheckInit(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := checkInit(tt.init(), plugins)
+			err := checkInit(tt.init(), "acceptEdits", plugins)
 			if tt.reason == "" {
 				if err != nil {
 					t.Fatalf("checkInit: %v", err)
@@ -92,5 +92,18 @@ func TestCheckInit(t *testing.T) {
 				t.Fatalf("got %v, want an error containing %q", err, tt.reason)
 			}
 		})
+	}
+}
+
+func TestCheckInitComparesAgainstTheModeTheCommandWasBuiltWith(t *testing.T) {
+	init := &initEvent{PermissionMode: "acceptEdits"}
+
+	err := checkInit(init, "dontAsk", nil)
+
+	if err == nil || err.Error() != `permission mode "acceptEdits", not dontAsk` {
+		t.Fatalf("got %v", err)
+	}
+	if err := checkInit(&initEvent{PermissionMode: "dontAsk"}, "dontAsk", nil); err != nil {
+		t.Fatalf("checkInit: %v", err)
 	}
 }
