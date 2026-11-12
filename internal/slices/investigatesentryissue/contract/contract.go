@@ -1,5 +1,5 @@
 // Package contract is what underling and the runner agree on
-// (docs/event-model.md § Runner contract): the runner's environment, the
+// (docs/event-model.md § Runner): the runner's environment, the
 // names of the files they exchange and the result file.
 package contract
 

@@ -15,7 +15,7 @@ import (
 )
 
 // RunnerLauncher runs an investigation's Claude step outside underling's
-// process, in a runner (docs/event-model.md § Runner contract).
+// process, in a runner (docs/event-model.md § Runner).
 type RunnerLauncher interface {
 	// Launch hands the runner the file at inputBundle and prompt, starts
 	// it as run describes and waits for it to end. An error means there is

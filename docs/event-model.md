@@ -135,7 +135,9 @@ git, Claude and GitHub only through small interfaces. `infrastructure.go`
 implements them with the slice's sub-packages: `workspace` (the run dir,
 clone, mirror and git commands), `claude` (the sandboxed child, its settings
 and output) and `github` (the draft PR). `investigator_test.go` specifies
-each outcome as an in-memory given/when/then test.
+each outcome as an in-memory given/when/then test. `remote.go` is a second
+implementation of the same interfaces, for a run whose Claude step happens
+in a [runner](#runner); the decision path is the same for both.
 
 The handler's name is its checkpoint key, so it must never change. It ignores
 other event types, and logs and skips a payload it cannot decode. For each
@@ -195,6 +197,12 @@ alert, in order:
    it, so neither can @mention anyone. A non-201 answer is a failure.
 9. The run dir is always removed, read-only dirs in it included.
 
+With a [runner](#runner), steps 4 and 5 differ and the rest is unchanged:
+underling makes only the mirror and packs its default branch into a git
+bundle, the runner clones that bundle and runs Claude, and step 6 fetches
+the branches out of the bundle the runner returns instead of out of a work
+clone.
+
 Every investigation ends in one recorded outcome, and a failure never stops
 the handler or later alerts. Each outcome is logged as one line,
 `sentry issue investigation finished`, with `handler`, `issueId`, `outcome`
@@ -243,6 +251,7 @@ The slice reads these when it is built. Any invalid value fails startup with
 | `CLAUDE_PLUGIN_DIRS` | yes | comma-separated plugin dirs (the Codex and auto-task plugins), each passed as `--plugin-dir` | |
 | `INVESTIGATION_TIMEOUT` | no | positive Go duration | `30m` |
 | `INVESTIGATION_MAX_AGE` | no | positive Go duration | `1h` |
+| `INVESTIGATION_MAX_BUNDLE_BYTES` | no | positive integer: the largest git bundle, in bytes, underling takes back from a [runner](#runner) | `1073741824` (1 GiB) |
 | `CLAUDE_BIN` | no | path or name of the `claude` executable | `claude` |
 | `INVESTIGATION_WORK_DIR` | no | directory for the per-run dirs, created (0700) if missing; the child may read only its own run's clone, HOME and Claude config dir in it | `underling-investigations-<uid>` in the OS temp dir (`underling-investigations` on Windows) |
 | `INVESTIGATION_DENY_READ` | no | comma-separated absolute paths the child may not read, such as underling's data dir | |
@@ -496,6 +505,218 @@ child's `HOME` and `CLAUDE_CONFIG_DIR`), `mirror.git` and `git-home` (the
   inspect underling's processes; run underling as a dedicated user or in a
   container.
 
+#### Runner
+
+An investigation's Claude step can run outside underling's process, in a
+runner: the command `underling-runner` (`cmd/underling-runner`, a thin
+wrapper around the slice's `runner` sub-package), which ships in the same
+[image](#container-image). underling and the runner exchange four files and
+nothing else. underling keeps the event store, the GitHub token, the checks,
+the push and the PR; the runner never talks to GitHub.
+
+The seam is `Params.Runner`, a launcher with one call: it gets the run's
+contract values, the path of the input bundle and the prompt, runs a runner
+to its end, and returns how to open the result and the output bundle, plus
+a release hook that the run's cleanup calls once. `nil`, the default, keeps
+the in-process run described above. A launcher needs
+[Bedrock mode](#bedrock-mode); without it startup fails. This repo has no
+production launcher yet: the ECS one is task 018.02, and until then only
+the tests set the seam, with a local HTTP file server in place of S3 and
+the runner called in-process. The slice's own code imports the `contract`
+sub-package but never the `runner` one (`imports_test.go` checks it).
+
+**Contract.** The `contract` sub-package holds what both halves agree on.
+The runner reads everything from its environment, and every variable is
+required:
+
+| Variable | Value |
+| --- | --- |
+| `RUNNER_RUN_ID` | `[A-Za-z0-9_-]{1,64}`; underling generates 32 hex characters from `crypto/rand` |
+| `RUNNER_BRANCH` | the investigation branch; the runner rejects one that fails `git check-ref-format --branch` |
+| `INVESTIGATION_TIMEOUT` | positive Go duration: Claude's timeout |
+| `RUNNER_INPUT_BUNDLE_URL`, `RUNNER_PROMPT_URL` | absolute `http(s)` URLs the runner GETs |
+| `RUNNER_OUTPUT_BUNDLE_URL`, `RUNNER_RESULT_URL` | absolute `http(s)` URLs the runner PUTs |
+| `AWS_REGION`, `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `CODEX_BEDROCK_MODEL`, `CODEX_BEDROCK_REGION` | the [Bedrock mode](#bedrock-mode) settings, in the same formats, with underling's defaults already applied |
+
+One function turns these values into `NAME=value` pairs and one parses them
+back, so a launcher builds a runner's environment from the code the runner
+reads it with. From the image's environment the runner also reads `PATH`,
+`CLAUDE_BIN`, `CLAUDE_PLUGIN_DIRS` and `INVESTIGATION_WORK_DIR`, with
+underling's meanings and defaults, and nothing else of underling's
+configuration. Its AWS credentials come from the AWS SDK's default chain in
+its own environment (on ECS, its task role), never from underling.
+
+The files of a run are named, under `runs/<runId>/`:
+
+| Name | Written by | Content |
+| --- | --- | --- |
+| `input/repo.bundle` | underling | a git bundle of `HEAD` and the default branch of the mirror, and no other ref, so a plain `git clone` of it checks out the default branch |
+| `input/prompt.txt` | underling | the prompt (the runner reads at most 1 MiB) |
+| `output/repo.bundle` | the runner | a git bundle of every branch of the work clone (`git bundle create --branches`) |
+| `output/result.json` | the runner | the result |
+
+The result is JSON with all four keys always present:
+
+```json
+{"version": 1, "status": "ok", "summary": "<Claude's summary>", "reason": ""}
+```
+
+`status` is `ok`, `failed` or `timeout`; a `failed` or `timeout` result has
+a non-empty `reason`. The runner cuts `summary` and `reason` to 64 KiB each,
+at a rune boundary, before encoding, which keeps the encoded result under
+the 1 MiB underling reads.
+
+**What the runner does**, in order:
+
+1. Reads `RUNNER_RESULT_URL`. Without a valid one it logs every missing or
+   invalid variable and exits 2: there is nowhere to report to.
+2. Reads the rest of its environment. From here on, whatever fails becomes
+   a `failed` result with the error's text as `reason`.
+3. Makes a fresh run dir under `INVESTIGATION_WORK_DIR` (checked as
+   underling's is) holding `repo`, `home`, `claude-config` and `git-home`,
+   and downloads the input bundle into it and the prompt into memory.
+4. Clones the bundle into `repo`, sets the same local git identity as
+   underling's work clone has, and checks out the new branch.
+5. Gets AWS credentials that outlast the timeout and writes the Codex
+   config, exactly as [Bedrock mode](#bedrock-mode) describes for underling.
+6. Runs Claude in `repo` with the given timeout (see
+   [Runner isolation](#runner-isolation) for how the invocation differs),
+   with the start-up checks of step 5 above. Claude is killed, with its
+   process group, at the timeout; that alone gives a `timeout` result.
+   Success gives `ok` with Claude's summary.
+7. Once the clone exists, whatever the status: bundles its branches and
+   uploads the bundle. If bundling or the upload fails, an `ok` becomes
+   `failed`; a `failed` or `timeout` result stays as it is and the bundle
+   error is only logged.
+8. Uploads the result, removes the run dir, and exits 0 if the result's PUT
+   was answered 2xx, whatever the result says, and 1 otherwise.
+
+So the bundle is always uploaded before the result, and an `ok` result means
+the bundle is there. A `failed` or `timeout` result may come without one (no
+clone yet, bundling failed, the runner was stopped).
+
+- **Stop.** On SIGTERM or SIGINT the runner kills Claude, skips the bundle
+  and uploads only a `failed` result ("the runner was stopped before it
+  finished"). The result upload outlives the signal by at most 20 seconds
+  (ECS kills a task 30 seconds after SIGTERM).
+- **Transfers.** A PUT carries an explicit `Content-Length` (S3 rejects a
+  chunked upload) and no header of the runner's own. A transfer is tried up
+  to three times, again after a transport error or a 5xx answer (after 1
+  and 2 seconds), and all attempts together are capped at 10 minutes.
+  Claude gets the full timeout, so downloads, clone, bundle and uploads run
+  on top of it.
+- **URL secrecy.** A presigned URL's query is a credential. No log line and
+  no result holds a URL of the run or its query: transfer errors drop the
+  URL Go's HTTP client puts in front, a non-2xx answer is reported by its
+  status only (S3's error bodies name signing details), and the runner
+  replaces any of the four URLs or their queries in an error text or in
+  Claude's summary with `[redacted]`.
+
+**underling's half** (`remote.go`), in place of steps 4 and 5:
+
+- **Clone.** underling makes the run dir with only `mirror.git` and
+  `git-home`, mirrors the repo, and packs `input.bundle`. A pack failure,
+  like a clone failure, is stage `clone`.
+- **Claude.** underling hands the launcher the contract values (a fresh run
+  id, the branch, `INVESTIGATION_TIMEOUT`, the Bedrock settings), the
+  bundle and the prompt. It never fetches AWS credentials or writes a Codex
+  config for such a run. When the launcher returns, underling reads the
+  result through a reader limited to 1 MiB + 1 byte. A `failed` result
+  fails the run as stage `claude` with the result's `reason`; a `timeout`
+  result fails it as stage `timeout`, reported with underling's own
+  `INVESTIGATION_TIMEOUT`. Only for `ok` does underling open the bundle: it
+  copies it into the run dir through a reader limited to
+  `INVESTIGATION_MAX_BUNDLE_BYTES` + 1 byte, runs `git bundle verify` on it
+  in the mirror (it is a bundle, and the mirror has every commit it builds
+  on), and from then on treats it as it treats a work clone: step 6 fetches
+  `refs/heads/*` out of it, and nothing else in it.
+- **Failures.** A launcher error, a result or bundle that can't be read, a
+  result over 1 MiB, one that isn't JSON, has another `version` or an
+  unknown `status`, a bundle over the limit and a bundle git can't verify
+  each fail the run as stage `claude`. These errors are flattened to text,
+  so a git or network timeout among them is never recorded as stage
+  `timeout`. There is no stage of its own for the runner here; 018.02 adds
+  `runner` for what fails before the runner's container runs.
+- **Limits of git.** `git bundle` commands time out after 10 minutes, like
+  clone, fetch and push.
+
+Two things differ from an in-process run by design. If Claude deletes every
+branch of the work clone, `git bundle create --branches` refuses to make an
+empty bundle and the run is Failed `claude`, where in-process it is
+NoChanges. And the work clone holds only the default branch, not the
+repo's other branches.
+
+`runner_e2e_test.go` runs the whole exchange locally without AWS: pack, the
+runner with the fake claude, take, then the checks, for a fix (PR opened),
+no commits, a commit on a stray branch, a Claude failure and a timeout.
+`remote_e2e_test.go` feeds underling's half canned output for each failure
+above.
+
+#### Runner isolation
+
+The runner has no Claude Code sandbox: bubblewrap is expected not to run
+on Fargate (see [Smoke](#smoke)), so the runner's container and its network
+rules are the boundary. In-process runs keep the sandbox.
+
+The runner starts Claude with the argv, stdin prompt, fresh `HOME` and
+`CLAUDE_CONFIG_DIR`, plugin dirs and model aliases of
+[Isolation](#isolation), and with exactly the Bedrock-mode environment
+listed there: no `RUNNER_*` variable and no URL of the run is in Claude's
+environment. Only the generated settings differ:
+
+```json
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "disableBypassPermissionsMode": "disable",
+    "allow": ["Bash", "Read", "Edit"]
+  },
+  "sandbox": {"enabled": false}
+}
+```
+
+There are no `Read` deny rules. With no sandbox to auto-allow shell
+commands, the allow rules are what lets them, and the file tools outside
+the clone, run unattended under `--permission-prompts none`; bypass mode
+stays disabled. The settings have no optional key, and a test pins them
+byte for byte: `-p` silently ignores settings that fail validation, which
+would drop the allow rules while the `system/init` check still passes.
+
+**Not yet checked against the real CLI.** That these settings let every
+shell command run unattended with the sandbox off (pipelines, redirects,
+`cd`, background commands, commands from a subagent) is the expected
+behaviour of the allow rules, but it has not been run against Claude Code:
+no credential was available when the runner was built, and the fake claude
+can't show it. The check, as task 018.01's plan step 8 lists it, is open.
+Until it has passed, treat a real runner run that ends with denied commands
+as this gap; the fallbacks, in order, are narrower extra rules,
+`--permission-mode dontAsk` with the same allow rules, and only then bypass
+mode.
+
+What Claude can reach in the runner:
+
+- **Files.** It runs as the runner's user and can read and write whatever
+  that user can in the container: the whole run dir (the input bundle and
+  `git-home` included), the work dir, the image's files.
+- **The runner's environment.** It can read the runner process's
+  environment through `/proc`, the four presigned URLs included. So it can
+  read the inputs again and overwrite the result and the output bundle
+  itself. That is why underling treats both as untrusted: size limits, a
+  version and status check, `git bundle verify`, and then the same
+  stray-branch, no-commits and CI-config checks as for an in-process run,
+  before anything is pushed.
+- **AWS credentials.** It has the runner's AWS credentials in its own
+  environment and can reach the credential endpoint the runner got them
+  from. Scope the runner's role to Bedrock invoke only, as
+  [AWS needs](#aws-needs) lists, and nothing else.
+- **Network.** Nothing in the runner limits where shell commands connect.
+  Where the runner's network allows outbound HTTPS (the ECS setup of epic
+  018 does: a public IP and outbound 443), Claude can reach any HTTPS
+  host. This is an accepted exposure.
+- **Never.** `GITHUB_TOKEN`, `SENTRY_CLIENT_SECRET` and the rest of
+  underling's environment are not in the runner at all. The clone has no
+  GitHub remote.
+
 #### AWS needs
 
 Exactly what Claude Code and Codex need in Bedrock mode, checked against
@@ -605,8 +826,8 @@ probe](#sandbox-probe) result holds for, and that `go env GOTOOLCHAIN` prints
 `local` with an empty env.
 
 - **User.** `underling`, uid/gid 10001, `HOME=/home/underling`. Every tool lives
-  outside `HOME`: `/usr/local/bin` (`underling`, `claude`, `codex`,
-  `underling-sandbox-probe`) and `/usr/local/go`, with `GOTOOLCHAIN=local` in
+  outside `HOME`: `/usr/local/bin` (`underling`, `underling-runner`,
+  `claude`, `codex`, `underling-sandbox-probe`) and `/usr/local/go`, with `GOTOOLCHAIN=local` in
   `/usr/local/go/go.env`.
 - **Paths.** `/var/lib/underling` (root, 0755) holds `data` (the event store)
   and `work` (the per-run dirs), both underling's and 0700. The Codex and
@@ -626,7 +847,8 @@ probe](#sandbox-probe) result holds for, and that `go env GOTOOLCHAIN` prints
   `underling.bwrap`, `underling.plugins.codex` and `underling.plugins.at`, each the version inside.
 - **Runtime.** `USER underling`, `EXPOSE 8080`, no entrypoint and
   `CMD ["underling","-addr",":8080","-data-dir","/var/lib/underling/data"]`, so a
-  probe task only overrides the command with `["underling-sandbox-probe"]`.
+  probe task only overrides the command with `["underling-sandbox-probe"]`,
+  and a [runner](#runner) task with `["underling-runner"]`.
   `HEALTHCHECK` runs `curl -fsS http://127.0.0.1:8080/healthz` every 10s
   (timeout 3s, start period 15s, 3 retries).
 - **Writable root.** Don't set `readonlyRootFilesystem`: `/tmp`, `HOME`,
@@ -637,8 +859,8 @@ behind an HTTPS ALB with OpenTofu, including a Fargate run of the probe.
 
 Make targets (all but `image-context` need Docker):
 
-- `make image-context` stages the build context in `bin/image`: the
-  linux-arm64 binary, the probe, and the newest version dir (`sort -V`, the
+- `make image-context` stages the build context in `bin/image`: the two
+  linux-arm64 binaries (`underling` and `underling-runner`), the probe, and the newest version dir (`sort -V`, the
   system test's rule) of `openai-codex/codex` and `auto-task/at` under
   `PLUGIN_CACHE` (default `~/.claude/plugins/cache`), without their
   `.in_use/`. It records the two versions in `bin/image/plugin-versions.mk`.
@@ -699,13 +921,17 @@ check:
 1. `"msg":"app started"` is logged within 30s, with no "won't run inside
    the sandbox" line;
 2. `GET /healthz` (via `docker exec … curl`) returns 200;
-3. `underling-sandbox-probe` passes.
+3. `underling-sandbox-probe` passes;
+4. `underling-runner`, run in a container of its own without its
+   environment, exits non-zero and its output names
+   `RUNNER_RESULT_URL: must be set`.
 
-Checks 1–2 failing exit 1. A probe failure prints a warning that Fargate
+Checks 1–2 and 4 failing exit 1. A probe failure prints a warning that Fargate
 likely can't run the sandbox and exits 0, unless `SMOKE_REQUIRE_PROBE=1`.
 The container is always removed.
 
-Recorded result (Docker 28.5.1, arm64, bubblewrap 0.8.0): checks 1–2 pass;
+Recorded result (Docker 28.5.1, arm64, bubblewrap 0.8.0): checks 1–2 and 4
+pass (the runner exits 2);
 the probe fails with `bwrap: No permissions to create new namespace`, the
 early warning that Fargate's settings can't run the sandbox. Under looser
 local settings the probe gives:
