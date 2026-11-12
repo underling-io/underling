@@ -29,7 +29,7 @@ Each investigation's Claude step runs in its own ECS Fargate task instead of ins
 
 | #   | Task                                         | File                                | Status |
 | --- | -------------------------------------------- | ----------------------------------- | ------ |
-| 01  | Runner command and file contract             | 018.01-runner-command.md            | ready-for-dev |
+| 01  | Runner command and file contract             | 018.01-runner-command.md            | in-dev |
 | 02  | ECS driver                                   | 018.02-ecs-driver.md                | ready-for-dev |
 | 03  | Infra: bucket, runner task definition, roles | 018.03-runner-infra.md              | ready-for-dev |
 
