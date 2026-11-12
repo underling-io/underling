@@ -19,13 +19,21 @@ import (
 type RunnerLauncher interface {
 	// Launch hands the runner the file at inputBundle and prompt, starts
 	// it as run describes and waits for it to end. An error means there is
-	// no output to read; the launcher has then released what it held.
+	// no output to read; the launcher has then released what it held, and
+	// of the output only Secrets counts.
 	Launch(ctx context.Context, run contract.Run, inputBundle, prompt string) (RunnerOutput, error)
 }
 
 // RunnerOutput is what a runner left behind. Neither file is trusted:
 // Claude can write both.
 type RunnerOutput struct {
+	// Secrets are the URLs the launcher gave the runner, or signed for
+	// itself, to move the run's files. Claude can read the runner's, so a
+	// result may name them. underling replaces each, and each one's query,
+	// in the summary, the result's reason and every error of the run
+	// before it logs, stores or publishes them. The launcher sets them
+	// with an error too.
+	Secrets []string
 	// Result opens the result file.
 	Result func(ctx context.Context) (io.ReadCloser, error)
 	// Bundle opens the output bundle. underling calls it only after an ok
@@ -76,7 +84,9 @@ type remoteRun struct {
 func (r *remoteRun) inputBundle() string  { return filepath.Join(r.ws.RunDir, "input.bundle") }
 func (r *remoteRun) outputBundle() string { return filepath.Join(r.ws.RunDir, "output.bundle") }
 
-// claude runs the runner and takes its output into the mirror.
+// claude runs the runner and takes its output into the mirror. Neither the
+// summary nor an error shows one of the run's URLs
+// (RunnerOutput.Secrets).
 //
 // Every error but the runner's own timeout result is flattened to text: a
 // git or net error that reports Timeout would otherwise pass for Claude
@@ -89,25 +99,27 @@ func (r *remoteRun) claude(ctx context.Context, prompt string) (string, error) {
 		Timeout: r.cfg.timeout,
 		Bedrock: contract.Bedrock{Region: b.region, Model: b.model, SmallFastModel: b.smallFastModel, CodexModel: b.codexModel, CodexRegion: b.codexRegion},
 	}, r.inputBundle(), prompt)
+	secrets := contract.Secrets(out.Secrets...)
+	redact := func(text string) string { return contract.Redact(text, secrets) }
 	if err != nil {
-		return "", fmt.Errorf("run the runner: %s", err.Error())
+		return "", fmt.Errorf("run the runner: %s", redact(err.Error()))
 	}
 	r.release = out.Release
 
 	result, err := readResult(ctx, out)
 	if err != nil {
-		return "", errors.New(err.Error())
+		return "", errors.New(redact(err.Error()))
 	}
 	switch result.Status {
 	case contract.StatusTimeout:
 		return "", &claude.TimeoutError{After: r.cfg.timeout}
 	case contract.StatusFailed:
-		return "", errors.New(result.Reason)
+		return "", errors.New(redact(result.Reason))
 	}
 	if err := r.takeBundle(ctx, out); err != nil {
-		return "", errors.New(err.Error())
+		return "", errors.New(redact(err.Error()))
 	}
-	return result.Summary, nil
+	return redact(result.Summary), nil
 }
 
 // readResult reads and checks the runner's result, at most

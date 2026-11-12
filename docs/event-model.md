@@ -516,8 +516,11 @@ the push and the PR; the runner never talks to GitHub.
 
 The seam is `Params.Runner`, a launcher with one call: it gets the run's
 contract values, the path of the input bundle and the prompt, runs a runner
-to its end, and returns how to open the result and the output bundle, plus
-a release hook that the run's cleanup calls once. `nil`, the default, keeps
+to its end, and returns how to open the result and the output bundle, the
+URLs it used for the run's files (`Secrets`, which underling
+[redacts](#runner-isolation); the launcher returns them with an error
+too), plus a release hook that the run's cleanup calls once. `nil`, the
+default, keeps
 the in-process run described above. A launcher needs
 [Bedrock mode](#bedrock-mode); without it startup fails. This repo has no
 production launcher yet: the ECS one is task 018.02, and until then only
@@ -610,7 +613,8 @@ clone yet, bundling failed, the runner was stopped).
   URL Go's HTTP client puts in front, a non-2xx answer is reported by its
   status only (S3's error bodies name signing details), and the runner
   replaces any of the four URLs or their queries in an error text or in
-  Claude's summary with `[redacted]`.
+  Claude's summary with `[redacted]`. That covers only a result the runner
+  wrote itself, so underling redacts again on its side (below).
 
 **underling's half** (`remote.go`), in place of steps 4 and 5:
 
@@ -637,6 +641,15 @@ clone yet, bundling failed, the runner was stopped).
   so a git or network timeout among them is never recorded as stage
   `timeout`. There is no stage of its own for the runner here; 018.02 adds
   `runner` for what fails before the runner's container runs.
+- **Redaction.** The result is untrusted, and Claude can read the run's
+  URLs in the runner, so underling doesn't rely on the runner's redaction.
+  It replaces each URL the launcher returned as `Secrets`, and each one's
+  query, with `[redacted]` (the `contract` package's `Redact`, the same
+  code the runner uses) in the summary, in a `failed` result's `reason` and
+  in the text of every launcher, download and bundle error, before any of
+  them reaches an event, a log line or a PR. It matches the exact text
+  only: a URL that Claude re-encoded or split is not recognised, and
+  neither is one in a commit of the bundle.
 - **Limits of git.** `git bundle` commands time out after 10 minutes, like
   clone, fetch and push.
 
@@ -704,7 +717,11 @@ What Claude can reach in the runner:
   itself. That is why underling treats both as untrusted: size limits, a
   version and status check, `git bundle verify`, and then the same
   stray-branch, no-commits and CI-config checks as for an in-process run,
-  before anything is pushed.
+  before anything is pushed. A result Claude wrote can also name the URLs,
+  which the runner's own redaction never sees; underling therefore
+  replaces the URLs the launcher reported, and their queries, in the
+  summary, the reason and every error text of the run before it stores,
+  logs or publishes them (see **Redaction** under [Runner](#runner)).
 - **AWS credentials.** It has the runner's AWS credentials in its own
   environment and can reach the credential endpoint the runner got them
   from. Scope the runner's role to Bedrock invoke only, as

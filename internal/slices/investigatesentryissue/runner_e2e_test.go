@@ -115,8 +115,9 @@ func (l *localLauncher) Launch(ctx context.Context, run contract.Run, inputBundl
 		}
 	}
 	return investigatesentryissue.RunnerOutput{
-		Result: get(urls.Result),
-		Bundle: get(urls.OutputBundle),
+		Secrets: []string{urls.InputBundle, urls.Prompt, urls.OutputBundle, urls.Result},
+		Result:  get(urls.Result),
+		Bundle:  get(urls.OutputBundle),
 		Release: func() {
 			l.mu.Lock()
 			defer l.mu.Unlock()

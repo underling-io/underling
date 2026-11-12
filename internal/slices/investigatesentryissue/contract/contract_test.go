@@ -254,3 +254,31 @@ func TestDecodeResult(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactReplacesEachSecretURLAndItsQuery(t *testing.T) {
+	urls := validEnv().URLs
+	secrets := contract.Secrets(urls.InputBundle, urls.Result, "", "https://bucket.example/unsigned")
+	text := "PUT " + urls.Result + " failed; try ?X-Amz-Signature=in or " + urls.InputBundle + "#top, not " + urls.Prompt
+
+	got := contract.Redact(text, secrets)
+
+	if want := "PUT [redacted] failed; try ?[redacted] or [redacted]#top, not " + urls.Prompt; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRedactTakesTheLongerSecretFirst(t *testing.T) {
+	secrets := contract.Secrets("https://h/a?sig=1", "https://h/a?sig=1&more=2")
+
+	got := contract.Redact("see https://h/a?sig=1&more=2", secrets)
+
+	if got != "see [redacted]" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestRedactWithoutSecretsChangesNothing(t *testing.T) {
+	if got := contract.Redact("a  b", contract.Secrets("")); got != "a  b" {
+		t.Errorf("got %q", got)
+	}
+}

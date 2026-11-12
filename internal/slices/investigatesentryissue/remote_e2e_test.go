@@ -1,7 +1,9 @@
 package investigatesentryissue_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"underling/internal/events"
@@ -33,9 +36,11 @@ func runnerMode(l investigatesentryissue.RunnerLauncher, aws *fakeAWS) []option 
 
 // cannedLauncher answers every launch with the same output.
 type cannedLauncher struct {
-	err    error
-	result func() io.Reader
-	bundle func(inputBundle string) io.Reader
+	err       error
+	secrets   []string // what the launcher says must not be published
+	bundleErr error    // what opening the bundle fails with
+	result    func() io.Reader
+	bundle    func(inputBundle string) io.Reader
 
 	mu       sync.Mutex
 	launched []cannedLaunch
@@ -58,7 +63,7 @@ func (l *cannedLauncher) Launch(_ context.Context, run contract.Run, inputBundle
 	defer l.mu.Unlock()
 	l.launched = append(l.launched, cannedLaunch{run: run, prompt: prompt, inputBundle: data})
 	if l.err != nil {
-		return investigatesentryissue.RunnerOutput{}, l.err
+		return investigatesentryissue.RunnerOutput{Secrets: l.secrets}, l.err
 	}
 	open := func(name string, r io.Reader) func(context.Context) (io.ReadCloser, error) {
 		return func(context.Context) (io.ReadCloser, error) {
@@ -69,14 +74,17 @@ func (l *cannedLauncher) Launch(_ context.Context, run contract.Run, inputBundle
 		}
 	}
 	out := investigatesentryissue.RunnerOutput{
-		Result: open("result", l.result()),
+		Secrets: l.secrets,
+		Result:  open("result", l.result()),
 		Release: func() {
 			l.mu.Lock()
 			defer l.mu.Unlock()
 			l.released++
 		},
 	}
-	if l.bundle != nil {
+	if l.bundleErr != nil {
+		out.Bundle = func(context.Context) (io.ReadCloser, error) { return nil, l.bundleErr }
+	} else if l.bundle != nil {
 		out.Bundle = open("bundle", l.bundle(inputBundle))
 	} else {
 		out.Bundle = func(context.Context) (io.ReadCloser, error) { return nil, errors.New("NoSuchKey") }
@@ -224,6 +232,110 @@ func TestUnderlingReadsTheBundleOnlyForAnOKResult(t *testing.T) {
 	assertFailed(t, h, "claude", "no clone yet")
 	if len(l.opened) != 1 || l.opened[0] != "result" {
 		t.Errorf("opened %q, want just the result", l.opened)
+	}
+}
+
+// The run's signed URLs, as a launcher would know them. Claude can read
+// them in the runner and write them into a result of its own.
+const (
+	signedResultURL = "https://bucket.test/runs/r/output/result.json?X-Amz-Signature=s3cr3t-result"
+	signedBundleURL = "https://bucket.test/runs/r/output/repo.bundle?X-Amz-Signature=s3cr3t-bundle"
+)
+
+var signedURLs = []string{signedResultURL, signedBundleURL}
+
+// forgedResult is a result of status whose summary and reason name the
+// signed URLs.
+func forgedResult(t *testing.T, status contract.Status) func() io.Reader {
+	t.Helper()
+	text := "PUT " + signedResultURL + " and ?X-Amz-Signature=s3cr3t-bundle"
+	data, err := json.Marshal(map[string]any{"version": 1, "status": status, "summary": text, "reason": text})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resultOf(string(data))
+}
+
+// fixBundle returns the input bundle's branches plus the investigation
+// branch with one commit.
+func fixBundle(t *testing.T) func(inputBundle string) io.Reader {
+	return func(inputBundle string) io.Reader {
+		dir := t.TempDir()
+		clone := filepath.Join(dir, "clone")
+		git(t, dir, "clone", "-q", inputBundle, clone)
+		git(t, clone, "checkout", "-q", "-b", branch)
+		if err := os.WriteFile(filepath.Join(clone, "fix.txt"), []byte("fixed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, clone, "add", "fix.txt")
+		git(t, clone, "commit", "-q", "-m", "Fix it")
+		out := filepath.Join(dir, "out.bundle")
+		git(t, clone, "bundle", "create", "-q", out, "--branches")
+		data, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bytes.NewReader(data)
+	}
+}
+
+// assertNoSignedURL fails if text shows a signed URL or its query.
+func assertNoSignedURL(t *testing.T, what, text string) {
+	t.Helper()
+	if strings.Contains(text, "s3cr3t") || strings.Contains(text, "bucket.test") {
+		t.Errorf("%s shows a signed URL:\n%s", what, text)
+	}
+}
+
+func TestAnOKResultNamingTheSignedURLsOpensAPRWithoutThem(t *testing.T) {
+	l := &cannedLauncher{secrets: signedURLs, result: forgedResult(t, contract.StatusOK), bundle: fixBundle(t)}
+	h := newHarness(t, modeNoop, runnerMode(l, &fakeAWS{err: errors.New("no AWS")})...)
+
+	h.handler.Handle(alert(5, 1, now))
+
+	h.assertStream(startedThenOutcome(events.SentryIssueInvestigationPullRequestOpenedType), nil)
+	reqs := h.github.recorded()
+	if len(reqs) != 1 {
+		t.Fatalf("got %d GitHub requests, want one PR", len(reqs))
+	}
+	var pr struct{ Body string }
+	if err := json.Unmarshal(reqs[0].body, &pr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pr.Body, "PUT [redacted] and ?[redacted]") {
+		t.Errorf("the PR body does not hold the redacted summary:\n%s", pr.Body)
+	}
+	assertNoSignedURL(t, "the PR body", pr.Body)
+	assertNoSignedURL(t, "the log", h.logText())
+}
+
+func TestRunnerFailuresNamingTheSignedURLsAreRecordedWithoutThem(t *testing.T) {
+	leak := errors.New("Get \"" + signedBundleURL + "\": status 403 for ?X-Amz-Signature=s3cr3t-result")
+	tests := []struct {
+		name     string
+		launcher *cannedLauncher
+		reason   string
+	}{
+		{"a failed result", &cannedLauncher{result: forgedResult(t, contract.StatusFailed)}, "PUT [redacted] and ?[redacted]"},
+		{"a launcher error", &cannedLauncher{err: leak}, `run the runner: Get "[redacted]": status 403 for ?[redacted]`},
+		{"a result that cannot be opened", &cannedLauncher{result: func() io.Reader { return iotest.ErrReader(leak) }},
+			`download the runner's result: Get "[redacted]": status 403 for ?[redacted]`},
+		{"a bundle that cannot be opened", &cannedLauncher{result: resultOf(okResult), bundleErr: leak},
+			`download the runner's bundle: Get "[redacted]": status 403 for ?[redacted]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.launcher.secrets = signedURLs
+			h := newHarness(t, modeNoop, runnerMode(tt.launcher, &fakeAWS{err: errors.New("no AWS")})...)
+
+			h.handler.Handle(alert(5, 1, now))
+
+			assertFailed(t, h, "claude", tt.reason)
+			var f events.SentryIssueInvestigationFailed
+			h.assertStream(startedThenOutcome(events.SentryIssueInvestigationFailedType), &f)
+			assertNoSignedURL(t, "the Failed event", f.Reason)
+			assertNoSignedURL(t, "the log", h.logText())
+		})
 	}
 }
 

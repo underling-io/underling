@@ -38,8 +38,6 @@ const (
 	stopGrace = 20 * time.Second
 	// maxPromptBytes is the largest prompt the runner downloads.
 	maxPromptBytes = 1 << 20
-
-	redacted = "[redacted]"
 )
 
 // errStopped is why a run ended whose runner was told to stop.
@@ -172,28 +170,14 @@ type run struct {
 }
 
 // urlSecrets returns the contract's URLs as getenv has them, and each
-// one's query, the longest first.
+// one's query.
 func urlSecrets(getenv func(string) string) []string {
-	var whole, queries []string
-	for _, variable := range []string{contract.InputBundleURLEnvVar, contract.PromptURLEnvVar, contract.OutputBundleURLEnvVar, contract.ResultURLEnvVar} {
-		value := getenv(variable)
-		if value == "" {
-			continue
-		}
-		whole = append(whole, value)
-		if _, query, ok := strings.Cut(value, "?"); ok && query != "" {
-			queries = append(queries, query)
-		}
-	}
-	return append(whole, queries...)
+	return contract.Secrets(getenv(contract.InputBundleURLEnvVar), getenv(contract.PromptURLEnvVar), getenv(contract.OutputBundleURLEnvVar), getenv(contract.ResultURLEnvVar))
 }
 
 // redact returns text without the run's URLs and their queries.
 func (r *run) redact(text string) string {
-	for _, secret := range r.secrets {
-		text = strings.ReplaceAll(text, secret, redacted)
-	}
-	return text
+	return contract.Redact(text, r.secrets)
 }
 
 // failed is the result of a run that err ended.
