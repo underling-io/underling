@@ -396,13 +396,19 @@ func TestAStoppedRunnerSkipsTheBundleAndUploadsAFailedResult(t *testing.T) {
 	f := newFixture(t, modeHang)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// The watcher ends with the test: cancel stops it even if the fake
+	// never started.
 	go func() {
 		for {
 			if _, err := os.Stat(filepath.Join(f.workDir, fakeStartedFile)); err == nil {
 				cancel()
 				return
 			}
-			time.Sleep(10 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
 		}
 	}()
 
