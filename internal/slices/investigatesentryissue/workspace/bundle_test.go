@@ -261,3 +261,30 @@ func TestBundleFailsWhenTheCloneHasNoBranch(t *testing.T) {
 		t.Fatalf("got %v, want a git bundle error", err)
 	}
 }
+
+func TestClonedIsTrueOnceTheCloneWasMadeWhateverBecomesOfIt(t *testing.T) {
+	ws, _ := newTestMirror(t)
+	bundle := packed(t, ws)
+	w, err := NewWork(filepath.Join(t.TempDir(), "runner-work"), os.Getenv("PATH"))
+	if err != nil {
+		t.Fatalf("NewWork: %v", err)
+	}
+	t.Cleanup(func() { _ = w.Remove() })
+	if w.Cloned() {
+		t.Error("Cloned before CloneBundle")
+	}
+	if err := w.CloneBundle(context.Background(), filepath.Join(t.TempDir(), "missing.bundle"), testBranch); err == nil || w.Cloned() {
+		t.Errorf("CloneBundle of a missing bundle: error %v, Cloned %t; want an error and false", err, w.Cloned())
+	}
+
+	if err := w.CloneBundle(context.Background(), bundle, testBranch); err != nil {
+		t.Fatalf("CloneBundle: %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(w.Clone, ".git")); err != nil {
+		t.Fatal(err)
+	}
+
+	if !w.Cloned() {
+		t.Error("not Cloned after the clone's .git was deleted")
+	}
+}

@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,6 +59,8 @@ type Work struct {
 	ClaudeConfig string
 
 	git gitRunner
+	// cloned is set once git cloned the bundle into Clone.
+	cloned bool
 }
 
 // NewWork makes a run dir under workDir with the child's dirs in it. git
@@ -111,14 +112,14 @@ func (w *Work) CloneBundle(ctx context.Context, path, branch string) error {
 	if _, err := w.git.local(ctx, w.RunDir, "clone", "--quiet", path, w.Clone); err != nil {
 		return err
 	}
+	w.cloned = true
 	return startBranch(ctx, w.git, w.Clone, branch)
 }
 
-// Cloned reports whether CloneBundle got as far as making the clone.
-func (w *Work) Cloned() bool {
-	_, err := os.Stat(filepath.Join(w.Clone, ".git"))
-	return !errors.Is(err, os.ErrNotExist)
-}
+// Cloned reports whether CloneBundle got as far as making the clone. It
+// is a record of that, not a look at the clone, which Claude may have
+// changed or deleted since.
+func (w *Work) Cloned() bool { return w.cloned }
 
 // Bundle writes a git bundle of every branch of the clone to path. git
 // refuses to make an empty bundle, so a clone without branches fails.

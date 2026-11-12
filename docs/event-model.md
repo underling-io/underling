@@ -517,9 +517,8 @@ the push and the PR; the runner never talks to GitHub.
 The seam is `Params.Runner`, a launcher with one call: it gets the run's
 contract values, the path of the input bundle and the prompt, runs a runner
 to its end, and returns how to open the result and the output bundle, the
-URLs it used for the run's files (`Secrets`, which underling
-[redacts](#runner-isolation); the launcher returns them with an error
-too), plus a release hook that the run's cleanup calls once. `nil`, the
+URLs it used for the run's files (`Secrets`, which underling redacts, see **Redaction** below; the launcher
+returns them with an error too), plus a release hook that the run's cleanup calls once. `nil`, the
 default, keeps
 the in-process run described above. A launcher needs
 [Bedrock mode](#bedrock-mode); without it startup fails. This repo has no
@@ -587,10 +586,11 @@ the 1 MiB underling reads.
    with the start-up checks of step 5 above. Claude is killed, with its
    process group, at the timeout; that alone gives a `timeout` result.
    Success gives `ok` with Claude's summary.
-7. Once the clone exists, whatever the status: bundles its branches and
-   uploads the bundle. If bundling or the upload fails, an `ok` becomes
-   `failed`; a `failed` or `timeout` result stays as it is and the bundle
-   error is only logged.
+7. Once step 4's `git clone` has succeeded, whatever the status and
+   whatever Claude left of the clone: bundles its branches and uploads the
+   bundle. If bundling or the upload fails (Claude deleted `.git`, say), an
+   `ok` becomes `failed`; a `failed` or `timeout` result stays as it is and
+   the bundle error is only logged.
 8. Uploads the result, removes the run dir, and exits 0 if the result's PUT
    was answered 2xx, whatever the result says, and 1 otherwise.
 

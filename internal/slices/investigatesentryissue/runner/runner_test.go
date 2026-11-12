@@ -38,6 +38,7 @@ const (
 	modeEcho   = "echo"   // report the prompt as the summary
 	modeFail   = "fail"   // commit a file, then fail
 	modeHang   = "hang"   // commit a file, then never finish
+	modeNoGit  = "no-git" // delete the clone's .git, then report success
 
 	testRunID  = "run-1"
 	testBranch = "underling/sentry-1"
@@ -99,6 +100,12 @@ func fakeClaude() int {
 	switch m := strings.TrimSpace(string(mode)); m {
 	case modeEcho:
 		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": string(prompt)})
+		return 0
+	case modeNoGit:
+		if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+			return fail("remove .git: %v", err)
+		}
+		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": "Fixed it."})
 		return 0
 	case modeCommit, modeFail, modeHang:
 		if err := commit(); err != nil {
@@ -513,6 +520,22 @@ func TestARefusedBundleUploadTurnsOKIntoFailed(t *testing.T) {
 	if got := f.result(); code != 0 || got != want {
 		t.Fatalf("exit code %d, result %+v; want 0 and %+v", code, got, want)
 	}
+	f.assertNoSecrets()
+}
+
+func TestAnOKWithoutAGitDirInTheCloneIsAFailedResult(t *testing.T) {
+	f := newFixture(t, modeNoGit)
+
+	code := f.run(context.Background())
+
+	result := f.result()
+	if code != 0 || result.Status != contract.StatusFailed || !strings.HasPrefix(result.Reason, "bundle the work clone's branches: ") {
+		t.Fatalf("exit code %d, result %+v; want 0 and a failed result naming the bundle", code, result)
+	}
+	if got, want := f.files.Puts(), []string{key(contract.OutputResult)}; !slices.Equal(got, want) {
+		t.Errorf("PUTs = %q, want %q", got, want)
+	}
+	f.assertRunDirRemoved()
 	f.assertNoSecrets()
 }
 
