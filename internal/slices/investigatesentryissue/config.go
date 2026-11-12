@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"underling/internal/slices/investigatesentryissue/claude"
+	"underling/internal/slices/investigatesentryissue/contract"
 )
 
 const (
@@ -20,7 +21,7 @@ const (
 	oauthTokenVar    = "CLAUDE_CODE_OAUTH_TOKEN"
 	openAIKeyVar     = "OPENAI_API_KEY"
 	pluginDirsEnvVar = "CLAUDE_PLUGIN_DIRS"
-	timeoutEnvVar    = "INVESTIGATION_TIMEOUT"
+	timeoutEnvVar    = contract.TimeoutEnvVar
 	maxAgeEnvVar     = "INVESTIGATION_MAX_AGE"
 	claudeBinEnvVar  = "CLAUDE_BIN"
 	workDirEnvVar    = "INVESTIGATION_WORK_DIR"
@@ -29,11 +30,11 @@ const (
 	cloneURLEnvVar   = "GITHUB_CLONE_URL"
 
 	useBedrockEnvVar     = "CLAUDE_CODE_USE_BEDROCK"
-	awsRegionEnvVar      = "AWS_REGION"
-	modelEnvVar          = "ANTHROPIC_MODEL"
-	smallFastModelEnvVar = "ANTHROPIC_SMALL_FAST_MODEL"
-	codexModelEnvVar     = "CODEX_BEDROCK_MODEL"
-	codexRegionEnvVar    = "CODEX_BEDROCK_REGION"
+	awsRegionEnvVar      = contract.RegionEnvVar
+	modelEnvVar          = contract.ModelEnvVar
+	smallFastModelEnvVar = contract.SmallFastModelEnvVar
+	codexModelEnvVar     = contract.CodexModelEnvVar
+	codexRegionEnvVar    = contract.CodexRegionEnvVar
 )
 
 // repo is a GitHub repository.
@@ -155,15 +156,6 @@ func parseCredential(apiKey, oauthToken string) (claude.Credential, error) {
 	return claude.Credential{}, fmt.Errorf("%s or %s: must be set", anthropicKeyVar, oauthTokenVar)
 }
 
-var (
-	// awsRegion is an AWS region's shape, such as eu-central-1; it ends up
-	// in a hostname.
-	awsRegion = regexp.MustCompile(`^[a-z]+(-[a-z]+)+-[0-9]+$`)
-	// modelID is a Bedrock model or inference-profile id; it ends up in
-	// TOML and a request path.
-	modelID = regexp.MustCompile(`^[A-Za-z0-9._:/-]+$`)
-)
-
 // parseBedrock reads Bedrock mode's settings. Neither Anthropic nor OpenAI
 // keys may be set, so the child never logs in any other way.
 func parseBedrock(getenv func(string) string) (*bedrockConfig, []error) {
@@ -173,25 +165,26 @@ func parseBedrock(getenv func(string) string) (*bedrockConfig, []error) {
 	}
 	// read returns variable's value, or def for "". A required variable
 	// has no default.
-	read := func(variable string, required bool, def string, valid *regexp.Regexp, shape string) string {
+	read := func(variable string, required bool, def string, check func(string) error) string {
 		value := getenv(variable)
 		switch {
 		case value == "" && required:
 			fail(variable, "must be set in Bedrock mode")
 		case value == "":
 			return def
-		case !valid.MatchString(value):
-			fail(variable, fmt.Sprintf("%q is not %s", value, shape))
+		default:
+			if err := check(value); err != nil {
+				fail(variable, err.Error())
+			}
 		}
 		return value
 	}
-	const regionShape, modelShape = "an AWS region such as eu-central-1", "a Bedrock model id of [A-Za-z0-9._:/-]"
 	b := &bedrockConfig{}
-	b.region = read(awsRegionEnvVar, true, "", awsRegion, regionShape)
-	b.model = read(modelEnvVar, true, "", modelID, modelShape)
-	b.smallFastModel = read(smallFastModelEnvVar, false, b.model, modelID, modelShape)
-	b.codexModel = read(codexModelEnvVar, true, "", modelID, modelShape)
-	b.codexRegion = read(codexRegionEnvVar, false, b.region, awsRegion, regionShape)
+	b.region = read(awsRegionEnvVar, true, "", contract.CheckRegion)
+	b.model = read(modelEnvVar, true, "", contract.CheckModel)
+	b.smallFastModel = read(smallFastModelEnvVar, false, b.model, contract.CheckModel)
+	b.codexModel = read(codexModelEnvVar, true, "", contract.CheckModel)
+	b.codexRegion = read(codexRegionEnvVar, false, b.region, contract.CheckRegion)
 	for _, key := range []string{anthropicKeyVar, oauthTokenVar, openAIKeyVar} {
 		if getenv(key) != "" {
 			fail(key, "must not be set in Bedrock mode")
