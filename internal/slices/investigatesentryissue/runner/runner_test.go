@@ -372,11 +372,11 @@ func TestAClaudeFailureStillUploadsTheBundleAndAFailedResult(t *testing.T) {
 
 func TestAClaudeTimeoutUploadsTheBundleAndATimeoutResult(t *testing.T) {
 	f := newFixture(t, modeHang)
-	f.env[contract.TimeoutEnvVar] = "1s"
+	f.env[contract.TimeoutEnvVar] = "3s"
 
 	code := f.run(context.Background())
 
-	if got, want := f.result(), (contract.Result{Version: 1, Status: contract.StatusTimeout, Reason: "claude did not finish within 1s"}); code != 0 || got != want {
+	if got, want := f.result(), (contract.Result{Version: 1, Status: contract.StatusTimeout, Reason: "claude did not finish within 3s"}); code != 0 || got != want {
 		t.Fatalf("exit code %d, result %+v; want 0 and %+v", code, got, want)
 	}
 	if got := f.outputBranches()[testBranch]; got != "Fix it" {
