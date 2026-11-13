@@ -1,4 +1,7 @@
-package investigatesentryissue
+// Package bedrock holds what a Bedrock run needs before Claude starts,
+// in underling and in the runner alike: AWS credentials that outlast the
+// run, and Codex's config.
+package bedrock
 
 import (
 	"context"
@@ -17,11 +20,11 @@ import (
 // retrieveTimeout bounds how long a run waits for AWS credentials.
 const retrieveTimeout = time.Minute
 
-// newCredentialsCache returns the AWS credentials every Bedrock run draws
+// NewCredentialsCache returns the AWS credentials every Bedrock run draws
 // from: provider, or the SDK's default chain (env, profile, ECS task role)
 // for nil. The cache refetches credentials that expire within timeout, so
 // a run never starts on credentials that could lapse before it ends.
-func newCredentialsCache(ctx context.Context, provider aws.CredentialsProvider, region string, timeout time.Duration) (aws.CredentialsProvider, error) {
+func NewCredentialsCache(ctx context.Context, provider aws.CredentialsProvider, region string, timeout time.Duration) (aws.CredentialsProvider, error) {
 	options := func(o *aws.CredentialsCacheOptions) {
 		o.ExpiryWindow = timeout
 		o.ExpiryWindowJitterFrac = 0
@@ -36,11 +39,11 @@ func newCredentialsCache(ctx context.Context, provider aws.CredentialsProvider, 
 	return cfg.Credentials, nil
 }
 
-// runCredentials returns credentials from cache that outlast timeout.
+// RunCredentials returns credentials from cache that outlast timeout.
 //
 // Errors are flattened to text: an SDK or net error that reports Timeout
 // would otherwise pass for Claude timing out.
-func runCredentials(ctx context.Context, cache aws.CredentialsProvider, timeout time.Duration) (claude.AWSCredentials, error) {
+func RunCredentials(ctx context.Context, cache aws.CredentialsProvider, timeout time.Duration) (claude.AWSCredentials, error) {
 	ctx, cancel := context.WithTimeout(ctx, retrieveTimeout)
 	defer cancel()
 	creds, err := cache.Retrieve(ctx)
@@ -57,7 +60,7 @@ func runCredentials(ctx context.Context, cache aws.CredentialsProvider, timeout 
 	return claude.AWSCredentials{AccessKeyID: creds.AccessKeyID, SecretAccessKey: creds.SecretAccessKey, SessionToken: creds.SessionToken}, nil
 }
 
-// codexConfig is the Codex config.toml underling writes for a Bedrock run.
+// codexConfig is the Codex config.toml written for a Bedrock run.
 type codexConfig struct {
 	Model          string                   `toml:"model"`
 	ModelProvider  string                   `toml:"model_provider"`
@@ -74,16 +77,16 @@ type codexProvider struct {
 // endpoint.
 const codexProviderID = "amazon-bedrock"
 
-// writeCodexConfig writes home/.codex/config.toml so Codex uses Bedrock.
-// The region goes in the file because the child's AWS_REGION is Claude's,
-// and Codex reads the file's first. Write errors are flattened to text, as
-// in runCredentials: a PathError that reports Timeout would otherwise pass
-// for Claude timing out.
-func writeCodexConfig(home string, b *bedrockConfig) error {
+// WriteCodexConfig writes home/.codex/config.toml so Codex uses model on
+// Bedrock in region. The region goes in the file because the child's
+// AWS_REGION is Claude's, and Codex reads the file's first. Write errors
+// are flattened to text, as in RunCredentials: a PathError that reports
+// Timeout would otherwise pass for Claude timing out.
+func WriteCodexConfig(home, model, region string) error {
 	var provider codexProvider
-	provider.AWS.Region = b.codexRegion
+	provider.AWS.Region = region
 	data, err := toml.Marshal(codexConfig{
-		Model:          b.codexModel,
+		Model:          model,
 		ModelProvider:  codexProviderID,
 		ModelProviders: map[string]codexProvider{codexProviderID: provider},
 	})

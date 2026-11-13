@@ -141,6 +141,8 @@ func fakeCmd(t *testing.T, mode string) Cmd {
 		dir:        t.TempDir(),
 		stdin:      "the prompt",
 		pluginDirs: testPluginDirs,
+
+		permissionMode: "acceptEdits",
 	}
 }
 

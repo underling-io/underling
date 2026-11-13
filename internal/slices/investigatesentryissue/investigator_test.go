@@ -150,6 +150,58 @@ func TestAFailedPRFailsTheInvestigation(t *testing.T) {
 		then(started(), failed(events.InvestigationFailedPR, "create pull request: status 422: Validation Failed"))
 }
 
+func TestNoFailureShowsWhatTheRunKeepsSecret(t *testing.T) {
+	tests := []struct {
+		name      string
+		behaviour behaviour
+		want      event
+	}{
+		{"claude failing", claudeFails("exit status 1: s3cr3t"), failed(events.InvestigationFailedClaude, "exit status 1: [redacted]")},
+		{"claude timing out", func(s *spec) { s.infra.claudeErr = timeoutError{"no answer from s3cr3t"} }, failed(events.InvestigationFailedTimeout, "no answer from [redacted]")},
+		{"listing branches", listingBranchesFails("git for-each-ref: s3cr3t"), failed(events.InvestigationFailedClaude, "collect claude's commits: git for-each-ref: [redacted]")},
+		{"a stray branch", claudeCommitsOn("s3cr3t"), failed(events.InvestigationFailedClaude, "claude committed on branches other than "+testBranch+", which underling doesn't push: [redacted]")},
+		{"counting commits", countingCommitsFails("git rev-list: s3cr3t"), failed(events.InvestigationFailedClaude, "collect claude's commits: git rev-list: [redacted]")},
+		{"listing changed paths", listingChangedPathsFails("git diff: s3cr3t"), failed(events.InvestigationFailedPush, "git diff: [redacted]")},
+		{"a CI config path", claudeChanges(".github/s3cr3t"), failed(events.InvestigationFailedPush, "changes CI configuration, so underling won't push it: .github/[redacted]")},
+		{"the push", pushFails("git push: s3cr3t"), failed(events.InvestigationFailedPush, "git push: [redacted]")},
+		{"the PR", prFails("create pull request: s3cr3t"), failed(events.InvestigationFailedPR, "create pull request: [redacted]")},
+		{"shutting down", func(s *spec) {
+			s.infra.duringPush = s.cancel
+			s.infra.pushErr = errors.New("git push: s3cr3t")
+		}, failed(events.InvestigationFailedShutdown, "git push: [redacted]")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := given(t).
+				when(anAlert(), theRunKeepsSecret("s3cr3t"), tt.behaviour).
+				then(started(), tt.want)
+
+			if strings.Contains(s.logs.String(), "s3cr3t") {
+				t.Errorf("the log shows the secret:\n%s", s.logs)
+			}
+		})
+	}
+}
+
+func TestThePRShowsNothingTheRunKeepsSecret(t *testing.T) {
+	// The summary is as long as to be cut inside the secret at its end.
+	room := maxPRBodyBytes - len(prBody(decodeAlert(t, anAlert()), ""))
+	summary := "See s3cr3t. " + strings.Repeat("x", room-len("See s3cr3t. ")-3) + "s3cr3t"
+	s := given(t).
+		when(anAlert(), theRunKeepsSecret("s3cr3t"), claudeSummarises(summary)).
+		then(started(), prOpened(testPRURL))
+
+	if s.infra.pr == nil {
+		t.Fatal("no PR was opened")
+	}
+	if !strings.Contains(s.infra.pr.body, "See [redacted]. xxx") {
+		t.Errorf("the PR body does not hold the redacted summary: %.300s", s.infra.pr.body)
+	}
+	if strings.Contains(s.infra.pr.body, "s3c") {
+		t.Error("the PR body shows the secret, or the part of it left by the cut")
+	}
+}
+
 func TestShuttingDownWhileClaudeRunsFailsTheInvestigation(t *testing.T) {
 	given(t).
 		when(anAlert(), underlingShutsDownWhileClaudeRuns).
@@ -461,6 +513,16 @@ func claudeTimesOut(s *spec) {
 	s.infra.claudeErr = timeoutError{"claude did not finish within 30m0s"}
 }
 
+func claudeSummarises(summary string) behaviour {
+	return func(s *spec) { s.infra.summary = summary }
+}
+
+// theRunKeepsSecret has the run redact secret, as a run in a runner does
+// its URLs.
+func theRunKeepsSecret(secret string) behaviour {
+	return func(s *spec) { s.infra.secret = secret }
+}
+
 func claudeCommitsNothing(s *spec) { s.infra.commits = 0 }
 
 func claudeCommitsOn(branches ...string) behaviour {
@@ -511,6 +573,8 @@ func (timeoutError) Timeout() bool   { return true }
 // investigator asked of them. By default Claude commits a fix that touches
 // no CI config and everything succeeds.
 type fakeInfra struct {
+	secret       string
+	summary      string
 	cloneErr     error
 	claudeErr    error
 	duringClaude func()
@@ -532,7 +596,7 @@ type fakeInfra struct {
 }
 
 func newFakeInfra() *fakeInfra {
-	return &fakeInfra{commits: 1, changed: []string{"src/app.js"}}
+	return &fakeInfra{summary: testSummary, commits: 1, changed: []string{"src/app.js"}}
 }
 
 func (f *fakeInfra) clone(_ context.Context, issueID string, target repo, branch string) (run, error) {
@@ -554,7 +618,14 @@ func (f *fakeInfra) claude(_ context.Context, prompt string) (string, error) {
 	if f.claudeErr != nil {
 		return "", f.claudeErr
 	}
-	return testSummary, nil
+	return f.summary, nil
+}
+
+func (f *fakeInfra) redact(text string) string {
+	if f.secret == "" {
+		return text
+	}
+	return strings.ReplaceAll(text, f.secret, "[redacted]")
 }
 
 func (f *fakeInfra) strayBranches(context.Context) ([]string, error) {

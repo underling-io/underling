@@ -4,8 +4,10 @@
 # --security-opt, no capabilities beyond SYS_PTRACE), and checks that:
 #   1. underling logs "app started" within 30s, with no sandbox warning;
 #   2. GET /healthz returns 200;
-#   3. the sandbox probe passes.
-# Checks 1-2 failing exits 1. A probe failure is a warning (exit 0) unless
+#   3. the sandbox probe passes;
+#   4. the runner command, run without its environment, exits non-zero and
+#      names a variable it misses.
+# Checks 1-2 and 4 failing exits 1. A probe failure is a warning (exit 0) unless
 # SMOKE_REQUIRE_PROBE=1.
 set -u
 
@@ -78,6 +80,18 @@ else
 	echo "FAIL: sandbox probe"
 	echo "WARNING: sandbox probe failed under Fargate-allowed container settings; Fargate likely can't run the sandbox (see 016.03/016.05)"
 	[ "${SMOKE_REQUIRE_PROBE:-}" = 1 ] && failed=1
+fi
+
+# A container of its own: the runner is a one-shot command, not a part of
+# the running app.
+runner_out=$(docker run --rm --platform linux/arm64 --network none "$image" underling-runner 2>&1)
+runner_code=$?
+if [ "$runner_code" -ne 0 ] && echo "$runner_out" | grep -q 'RUNNER_RESULT_URL: must be set'; then
+	echo "PASS: underling-runner without its environment exited $runner_code naming RUNNER_RESULT_URL"
+else
+	echo "FAIL: underling-runner without its environment exited $runner_code; output:"
+	echo "$runner_out"
+	failed=1
 fi
 
 exit "$failed"

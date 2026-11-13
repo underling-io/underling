@@ -11,8 +11,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The test binary doubles as a fake claude: the slice runs it as CLAUDE_BIN,
@@ -23,10 +25,19 @@ import (
 const (
 	fakeModeFile  = "fake-claude-mode"
 	fakeCallsFile = "fake-claude-calls.jsonl"
+	// fakeRunnerFile marks the work dir of a runner: the fake then expects
+	// the runner's settings, without the sandbox.
+	fakeRunnerFile = "fake-claude-runner"
+	// fakeDescendantFile holds the pid of the process modeHang leaves
+	// behind.
+	fakeDescendantFile = "fake-claude-descendant"
 
 	// Fake modes.
 	modeHappy = "happy" // commit a file, then report success
 	modeNoop  = "noop"  // report success without committing
+	modeStray = "stray" // commit a file on a branch of its own, then report success
+	modeFail  = "fail"  // exit non-zero after an error result
+	modeHang  = "hang"  // start a process that outlives it, then never finish
 
 	fakeSummary = "Root cause: blooopy was never declared. Fix: declare it."
 )
@@ -63,7 +74,11 @@ func fakeClaude() int {
 	if err != nil {
 		return fail("read mode: %v", err)
 	}
-	if err := checkSettings(os.Args[1:], dir); err != nil {
+	check := checkSettings
+	if _, err := os.Stat(filepath.Join(workDir, fakeRunnerFile)); err == nil {
+		check = checkRunnerSettings
+	}
+	if err := check(os.Args[1:], dir); err != nil {
 		return fail("%v", err)
 	}
 	prompt, err := io.ReadAll(os.Stdin)
@@ -85,6 +100,30 @@ func fakeClaude() int {
 		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": fakeSummary})
 	case modeNoop:
 		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": "Nothing to fix."})
+	case modeStray:
+		checkout := exec.Command("git", "checkout", "-q", "-b", "claude-own")
+		checkout.Dir = dir
+		if out, err := checkout.CombinedOutput(); err != nil {
+			return fail("git checkout: %v: %s", err, out)
+		}
+		if err := commitFix(dir, "fix.txt"); err != nil {
+			return fail("%v", err)
+		}
+		emit(map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": fakeSummary})
+	case modeFail:
+		emit(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "model refused"})
+		return 1
+	case modeHang:
+		sleeper := exec.Command("sleep", "300")
+		if err := sleeper.Start(); err != nil {
+			return fail("start descendant: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(workDir, fakeDescendantFile), []byte(strconv.Itoa(sleeper.Process.Pid)), 0o644); err != nil {
+			return fail("record descendant: %v", err)
+		}
+		for {
+			time.Sleep(time.Hour)
+		}
 	default:
 		return fail("unknown mode %q", m)
 	}
@@ -163,6 +202,30 @@ func checkSettings(args []string, clone string) error {
 	}
 	if !slices.Contains(fs.DenyRead, workDir) || len(fs.AllowRead) < 3 || !slices.Equal(fs.AllowRead[:3], []string{clone, home, claudeConfig}) {
 		return fmt.Errorf("settings %s don't limit reads in %s to %s, %s and %s", args[i+1], workDir, clone, home, claudeConfig)
+	}
+	return nil
+}
+
+// checkRunnerSettings asserts that the --settings JSON is the runner's:
+// the sandbox off, allow rules that let shell commands and the file tools
+// run unattended, bypass mode disabled and no deny rules.
+func checkRunnerSettings(args []string, _ string) error {
+	i := slices.Index(args, "--settings")
+	if i < 0 || i+1 >= len(args) {
+		return fmt.Errorf("no --settings in %q", args)
+	}
+	var s struct {
+		Permissions map[string]json.RawMessage `json:"permissions"`
+		Sandbox     map[string]json.RawMessage `json:"sandbox"`
+	}
+	if err := json.Unmarshal([]byte(args[i+1]), &s); err != nil {
+		return fmt.Errorf("decode settings: %v", err)
+	}
+	if len(s.Sandbox) != 1 || string(s.Sandbox["enabled"]) != "false" {
+		return fmt.Errorf("settings %s don't just turn the sandbox off", args[i+1])
+	}
+	if _, denies := s.Permissions["deny"]; denies || string(s.Permissions["allow"]) != `["Bash","Read","Edit"]` || string(s.Permissions["disableBypassPermissionsMode"]) != `"disable"` {
+		return fmt.Errorf("settings %s don't allow Bash, Read and Edit with bypass mode disabled and no deny rules", args[i+1])
 	}
 	return nil
 }

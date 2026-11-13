@@ -90,7 +90,14 @@ type Cmd struct {
 	stdin string
 	// pluginDirs must each show up as loaded in the session's init event.
 	pluginDirs []string
+	// permissionMode is the --permission-mode the session's init event
+	// must report.
+	permissionMode string
 }
+
+// permissionMode is the mode every run starts in: edits are accepted,
+// and nothing else runs without an allow rule or the sandbox.
+const permissionMode = "acceptEdits"
 
 // Command builds the headless claude invocation for a run in dirs. The
 // child gets only PATH, its own HOME and config dir, and the two model
@@ -101,7 +108,21 @@ type Cmd struct {
 // skips MCP servers with --strict-mcp-config instead; the fresh config dir
 // and --setting-sources "" keep installed plugins and settings out.
 func Command(cfg Config, dirs Dirs, prompt string) (Cmd, error) {
-	settings, err := json.Marshal(sandboxSettings(cfg, dirs))
+	return command(cfg, dirs, prompt, sandboxSettings(cfg, dirs))
+}
+
+// UnsandboxedCommand is Command without the sandbox and without the Read
+// deny rules, for a run whose container is the boundary (the runner):
+// allow rules let shell commands and the file tools run unattended
+// instead. Everything else, the child's environment included, is
+// Command's; cfg's ParentHome, DenyRead and Readable are unused.
+func UnsandboxedCommand(cfg Config, dirs Dirs, prompt string) (Cmd, error) {
+	return command(cfg, dirs, prompt, unsandboxedSettings())
+}
+
+// command builds the invocation with settings as its --settings.
+func command(cfg Config, dirs Dirs, prompt string, settings any) (Cmd, error) {
+	encoded, err := json.Marshal(settings)
 	if err != nil {
 		return Cmd{}, err
 	}
@@ -114,8 +135,8 @@ func Command(cfg Config, dirs Dirs, prompt string) (Cmd, error) {
 		"--verbose", "--output-format", "stream-json",
 		"--no-session-persistence",
 		"--setting-sources", "",
-		"--settings", string(settings),
-		"--permission-mode", "acceptEdits",
+		"--settings", string(encoded),
+		"--permission-mode", permissionMode,
 		"--permission-prompts", "none",
 	}
 	for _, dir := range cfg.PluginDirs {
@@ -128,6 +149,8 @@ func Command(cfg Config, dirs Dirs, prompt string) (Cmd, error) {
 		env:        childEnv(cfg, dirs),
 		stdin:      prompt,
 		pluginDirs: cfg.PluginDirs,
+
+		permissionMode: permissionMode,
 	}, nil
 }
 
@@ -206,7 +229,7 @@ func sandboxSettings(cfg Config, dirs Dirs) settings {
 	denied := WithResolved(append([]string{cfg.ParentHome}, cfg.DenyRead...))
 
 	var s settings
-	s.Permissions.DefaultMode = "acceptEdits"
+	s.Permissions.DefaultMode = permissionMode
 	s.Permissions.DisableBypassPermissionsMode = "disable"
 	s.Permissions.Deny = []string{"Read(//proc/**)"}
 	for _, p := range slices.Concat(denied, dirs.Siblings, []string{dirs.Mirror, dirs.GitHome}) {
@@ -223,6 +246,33 @@ func sandboxSettings(cfg Config, dirs Dirs) settings {
 	if cfg.Bedrock != nil {
 		s.Sandbox.Network.AllowedDomains = []string{bedrockHost(cfg.Bedrock.CodexRegion)}
 	}
+	return s
+}
+
+// runnerSettings is the settings.json of a run without the sandbox. It
+// has no optional key: -p silently ignores settings that fail validation,
+// and a null or empty key must not be what drops the allow rules.
+type runnerSettings struct {
+	Permissions struct {
+		DefaultMode                  string   `json:"defaultMode"`
+		DisableBypassPermissionsMode string   `json:"disableBypassPermissionsMode"`
+		Allow                        []string `json:"allow"`
+	} `json:"permissions"`
+	Sandbox struct {
+		Enabled bool `json:"enabled"`
+	} `json:"sandbox"`
+}
+
+// unsandboxedSettings returns the settings for a run without the sandbox.
+// With no sandbox to auto-allow shell commands, the allow rules do: Bash
+// for every command, Read and Edit for the file tools outside the clone.
+// Bypass mode stays disabled.
+func unsandboxedSettings() runnerSettings {
+	var s runnerSettings
+	s.Permissions.DefaultMode = permissionMode
+	s.Permissions.DisableBypassPermissionsMode = "disable"
+	s.Permissions.Allow = []string{"Bash", "Read", "Edit"}
+	s.Sandbox.Enabled = false
 	return s
 }
 

@@ -3,6 +3,7 @@ package investigatesentryissue
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"underling/internal/slices/investigatesentryissue/claude"
+	"underling/internal/slices/investigatesentryissue/contract"
 )
 
 const (
@@ -20,8 +22,9 @@ const (
 	oauthTokenVar    = "CLAUDE_CODE_OAUTH_TOKEN"
 	openAIKeyVar     = "OPENAI_API_KEY"
 	pluginDirsEnvVar = "CLAUDE_PLUGIN_DIRS"
-	timeoutEnvVar    = "INVESTIGATION_TIMEOUT"
+	timeoutEnvVar    = contract.TimeoutEnvVar
 	maxAgeEnvVar     = "INVESTIGATION_MAX_AGE"
+	maxBundleEnvVar  = "INVESTIGATION_MAX_BUNDLE_BYTES"
 	claudeBinEnvVar  = "CLAUDE_BIN"
 	workDirEnvVar    = "INVESTIGATION_WORK_DIR"
 	denyReadEnvVar   = "INVESTIGATION_DENY_READ"
@@ -29,11 +32,11 @@ const (
 	cloneURLEnvVar   = "GITHUB_CLONE_URL"
 
 	useBedrockEnvVar     = "CLAUDE_CODE_USE_BEDROCK"
-	awsRegionEnvVar      = "AWS_REGION"
-	modelEnvVar          = "ANTHROPIC_MODEL"
-	smallFastModelEnvVar = "ANTHROPIC_SMALL_FAST_MODEL"
-	codexModelEnvVar     = "CODEX_BEDROCK_MODEL"
-	codexRegionEnvVar    = "CODEX_BEDROCK_REGION"
+	awsRegionEnvVar      = contract.RegionEnvVar
+	modelEnvVar          = contract.ModelEnvVar
+	smallFastModelEnvVar = contract.SmallFastModelEnvVar
+	codexModelEnvVar     = contract.CodexModelEnvVar
+	codexRegionEnvVar    = contract.CodexRegionEnvVar
 )
 
 // repo is a GitHub repository.
@@ -52,11 +55,14 @@ type config struct {
 	pluginDirs  []string
 	timeout     time.Duration
 	maxAge      time.Duration
-	claudeBin   string
-	workDir     string // "" until New picks the default
-	path        string // the child's PATH: underling's own
-	parentHome  string // underling's HOME, or ""; the child may not read it
-	denyRead    []string
+	// maxBundle is the largest bundle, in bytes, underling takes back from
+	// a runner.
+	maxBundle  int64
+	claudeBin  string
+	workDir    string // "" until New picks the default
+	path       string // the child's PATH: underling's own
+	parentHome string // underling's HOME, or ""; the child may not read it
+	denyRead   []string
 	// readable are the paths under denied ones that sandboxed commands
 	// still need: the plugin dirs and the claude binary's dir. Set by
 	// resolveReadPaths.
@@ -129,6 +135,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 	check(timeoutEnvVar, err)
 	cfg.maxAge, err = parseDuration(getenv(maxAgeEnvVar), time.Hour)
 	check(maxAgeEnvVar, err)
+	cfg.maxBundle, err = parseBytes(getenv(maxBundleEnvVar), 1<<30)
+	check(maxBundleEnvVar, err)
 	cfg.denyRead, err = parsePaths(getenv(denyReadEnvVar))
 	check(denyReadEnvVar, err)
 	cfg.apiURL, err = parseAPIURL(getenv(apiURLEnvVar))
@@ -155,15 +163,6 @@ func parseCredential(apiKey, oauthToken string) (claude.Credential, error) {
 	return claude.Credential{}, fmt.Errorf("%s or %s: must be set", anthropicKeyVar, oauthTokenVar)
 }
 
-var (
-	// awsRegion is an AWS region's shape, such as eu-central-1; it ends up
-	// in a hostname.
-	awsRegion = regexp.MustCompile(`^[a-z]+(-[a-z]+)+-[0-9]+$`)
-	// modelID is a Bedrock model or inference-profile id; it ends up in
-	// TOML and a request path.
-	modelID = regexp.MustCompile(`^[A-Za-z0-9._:/-]+$`)
-)
-
 // parseBedrock reads Bedrock mode's settings. Neither Anthropic nor OpenAI
 // keys may be set, so the child never logs in any other way.
 func parseBedrock(getenv func(string) string) (*bedrockConfig, []error) {
@@ -173,25 +172,26 @@ func parseBedrock(getenv func(string) string) (*bedrockConfig, []error) {
 	}
 	// read returns variable's value, or def for "". A required variable
 	// has no default.
-	read := func(variable string, required bool, def string, valid *regexp.Regexp, shape string) string {
+	read := func(variable string, required bool, def string, check func(string) error) string {
 		value := getenv(variable)
 		switch {
 		case value == "" && required:
 			fail(variable, "must be set in Bedrock mode")
 		case value == "":
 			return def
-		case !valid.MatchString(value):
-			fail(variable, fmt.Sprintf("%q is not %s", value, shape))
+		default:
+			if err := check(value); err != nil {
+				fail(variable, err.Error())
+			}
 		}
 		return value
 	}
-	const regionShape, modelShape = "an AWS region such as eu-central-1", "a Bedrock model id of [A-Za-z0-9._:/-]"
 	b := &bedrockConfig{}
-	b.region = read(awsRegionEnvVar, true, "", awsRegion, regionShape)
-	b.model = read(modelEnvVar, true, "", modelID, modelShape)
-	b.smallFastModel = read(smallFastModelEnvVar, false, b.model, modelID, modelShape)
-	b.codexModel = read(codexModelEnvVar, true, "", modelID, modelShape)
-	b.codexRegion = read(codexRegionEnvVar, false, b.region, awsRegion, regionShape)
+	b.region = read(awsRegionEnvVar, true, "", contract.CheckRegion)
+	b.model = read(modelEnvVar, true, "", contract.CheckModel)
+	b.smallFastModel = read(smallFastModelEnvVar, false, b.model, contract.CheckModel)
+	b.codexModel = read(codexModelEnvVar, true, "", contract.CheckModel)
+	b.codexRegion = read(codexRegionEnvVar, false, b.region, contract.CheckRegion)
 	for _, key := range []string{anthropicKeyVar, oauthTokenVar, openAIKeyVar} {
 		if getenv(key) != "" {
 			fail(key, "must not be set in Bedrock mode")
@@ -283,6 +283,26 @@ func parseDuration(value string, def time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s is not positive", value)
 	}
 	return d, nil
+}
+
+// parseBytes parses a positive number of bytes, or returns def for "". The
+// most it takes is one less than the largest int64: a reader of the limit
+// reads one byte past it.
+func parseBytes(value string, def int64) (int64, error) {
+	if value == "" {
+		return def, nil
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%q is not a number of bytes", value)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("%s is not positive", value)
+	}
+	if n > math.MaxInt64-1 {
+		return 0, fmt.Errorf("%s is larger than the most, %d", value, int64(math.MaxInt64-1))
+	}
+	return n, nil
 }
 
 // parseAPIURL parses an absolute http(s) URL without credentials, query or

@@ -1,4 +1,7 @@
 BINARY := bin/underling-linux-arm64
+# The runner command (docs/event-model.md § Runner); it ships in the same
+# image.
+RUNNER_BINARY := bin/underling-runner-linux-arm64
 
 # Container image (docs/event-model.md § Container image).
 IMAGE ?= underling
@@ -20,6 +23,7 @@ PLUGIN_CACHE ?= $(HOME)/.claude/plugins/cache
 
 build-linux-arm64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o $(BINARY) ./cmd/underling
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o $(RUNNER_BINARY) ./cmd/underling-runner
 
 check:
 	go vet ./...
@@ -47,13 +51,14 @@ system-test:
 postdeploy-test:
 	go test -tags postdeploy -timeout 60m -v -count=1 ./internal/systemtest/postdeploy
 
-# Stages the image's build context in bin/image: the binary, the sandbox
-# probe, the newest version dir of each plugin (without .in_use/, which
+# Stages the image's build context in bin/image: the two binaries, the
+# sandbox probe, the newest version dir of each plugin (without .in_use/, which
 # holds live pid files) and plugin-versions.mk recording those versions.
 image-context: build-linux-arm64
 	rm -rf bin/image
 	mkdir -p bin/image/plugins
 	cp $(BINARY) bin/image/underling
+	cp $(RUNNER_BINARY) bin/image/underling-runner
 	cp deploy/image/underling-sandbox-probe bin/image/
 	@set -e; : > bin/image/plugin-versions.mk; \
 	for p in openai-codex/codex:codex:CODEX auto-task/at:at:AT; do \
@@ -101,8 +106,8 @@ image-push:
 	echo "pushed $$url:$(IMAGE_TAG)"
 
 # Needs Docker. Runs the image with dummy Bedrock config under settings
-# Fargate allows. A sandbox probe failure is only a warning unless
-# SMOKE_REQUIRE_PROBE=1.
+# Fargate allows, and the runner command without its environment. A sandbox
+# probe failure is only a warning unless SMOKE_REQUIRE_PROBE=1.
 image-smoke: image
 	deploy/image/smoke.sh $(IMAGE):$(IMAGE_TAG)
 
