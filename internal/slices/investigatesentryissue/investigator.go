@@ -48,6 +48,11 @@ type run interface {
 	// changedPaths lists the paths those commits change.
 	changedPaths(ctx context.Context) ([]string, error)
 	push(ctx context.Context) error
+	// redact returns text without what the run keeps secret. Whatever of
+	// the run's the investigator stores, logs or publishes goes through
+	// it: the run's errors, and anything read out of the clone, whose
+	// branch and path names Claude chose.
+	redact(text string) string
 	// defaultBranch is the branch the PR targets.
 	defaultBranch() string
 	// remove deletes the clone, logging any failure.
@@ -111,14 +116,16 @@ func (h *investigator) Handle(e eventstore.Event) {
 
 // investigate clones target, lets Claude work on branch, and pushes it and
 // opens a draft PR if Claude committed a fix. Once underling shuts down, any
-// failure is a shutdown failure.
+// failure is a shutdown failure. No failure reason and no PR shows what the
+// run keeps secret (run.redact).
 func (h *investigator) investigate(alert events.SentryIssueAlertReceived, target repo, branch string) outcome {
 	ctx := h.ctx
+	redact := func(text string) string { return text } // until there is a run
 	fail := func(stage string, err error) outcome {
 		if ctx.Err() != nil {
 			stage = events.InvestigationFailedShutdown
 		}
-		return failedOutcome(alert.IssueID, stage, err.Error())
+		return failedOutcome(alert.IssueID, stage, redact(err.Error()))
 	}
 
 	run, err := h.cloner.clone(ctx, alert.IssueID, target, branch)
@@ -126,6 +133,7 @@ func (h *investigator) investigate(alert events.SentryIssueAlertReceived, target
 		return fail(events.InvestigationFailedClone, err)
 	}
 	defer run.remove()
+	redact = run.redact
 
 	summary, err := run.claude(ctx, investigationPrompt(alert, branch))
 	if timedOut(err) {
@@ -134,6 +142,8 @@ func (h *investigator) investigate(alert events.SentryIssueAlertReceived, target
 	if err != nil {
 		return fail(events.InvestigationFailedClaude, err)
 	}
+	// Before the PR body cuts the summary, which could cut a secret in two.
+	summary = redact(summary)
 
 	stray, err := run.strayBranches(ctx)
 	if err != nil {
@@ -162,10 +172,10 @@ func (h *investigator) investigate(alert events.SentryIssueAlertReceived, target
 	}
 
 	url, err := h.prs.openDraft(ctx, target, pullRequest{
-		title: prTitle(alert),
+		title: redact(prTitle(alert)),
 		head:  branch,
 		base:  run.defaultBranch(),
-		body:  prBody(alert, summary),
+		body:  redact(prBody(alert, summary)),
 	})
 	if err != nil {
 		return fail(events.InvestigationFailedPR, err)

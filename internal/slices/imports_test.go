@@ -82,6 +82,29 @@ func TestSlicesImportOnlySharedEventsPlatformAndTheirOwnPackages(t *testing.T) {
 	}
 }
 
+// runnerPath is the runner command's package. It is a program of its own
+// (cmd/underling-runner) that underling reaches only through files.
+const runnerPath = slicesPath + "/investigatesentryissue/runner"
+
+// TestUnderlingDoesNotImportTheRunner checks that no non-test file of the
+// investigate slice, outside the runner's own packages, imports the
+// runner: the two share the contract package and nothing else. Tests may,
+// to run the whole exchange in one process.
+func TestUnderlingDoesNotImportTheRunner(t *testing.T) {
+	const dir = "investigatesentryissue"
+	violations, err := importViolations(dir, func(path string) bool { return !within(path, runnerPath) })
+	if err != nil {
+		t.Fatalf("scan %s: %v", dir, err)
+	}
+	for _, v := range violations {
+		file, _, _ := strings.Cut(v, " ")
+		if strings.HasSuffix(file, "_test.go") || strings.HasPrefix(file, "runner/") {
+			continue
+		}
+		t.Errorf("slice %s: %s; underling's half may import only the contract package of the runner exchange", dir, v)
+	}
+}
+
 func TestThePlatformImportsNoSlice(t *testing.T) {
 	violations, err := importViolations("../platform", platformMayImport)
 	if err != nil {

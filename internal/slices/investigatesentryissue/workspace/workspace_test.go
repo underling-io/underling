@@ -360,6 +360,7 @@ func TestGitTimeouts(t *testing.T) {
 		{[]string{"clone", "--quiet", "--bare", "https://github.com/acme/web.git", "/w/run/mirror.git"}, 10 * time.Minute},
 		{[]string{"fetch", "--quiet", "/w/run/repo", "+refs/heads/x:refs/heads/x"}, 10 * time.Minute},
 		{[]string{"-c", "core.hooksPath=/dev/null", "push", "--quiet", "origin", "x"}, 10 * time.Minute},
+		{[]string{"bundle", "create", "/w/run/input.bundle", "HEAD"}, 10 * time.Minute},
 		{[]string{"rev-list", "--count", "a..b"}, time.Minute},
 		{[]string{"-c", "x=y", "config", "user.name", "underling"}, time.Minute},
 	}

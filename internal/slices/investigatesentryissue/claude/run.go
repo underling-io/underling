@@ -93,7 +93,7 @@ func Run(ctx context.Context, cmd Cmd, timeout time.Duration) (string, error) {
 	case readErr != nil:
 		return "", errors.New("read claude output: " + readErr.Error())
 	}
-	if err := checkInit(out.init, cmd.pluginDirs); err != nil {
+	if err := checkInit(out.init, cmd.permissionMode, cmd.pluginDirs); err != nil {
 		return "", errors.New("claude's session did not start as configured: " + err.Error())
 	}
 	if !out.ok {

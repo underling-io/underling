@@ -76,7 +76,7 @@ what Claude can touch, but it still runs as underling's user.
 | `make check` | `go vet` and `go test -race` over everything |
 | `go generate ./...` | regenerates `internal/slices/slices_gen.go` after adding a slice |
 | `make system-test` | replays a real upstream bug fix with the real Claude Code; costs tokens, up to 45 minutes |
-| `make build-linux-arm64` | builds `bin/underling-linux-arm64` |
+| `make build-linux-arm64` | builds `bin/underling-linux-arm64` and `bin/underling-runner-linux-arm64` |
 | `make image` / `make image-smoke` | builds the linux/arm64 image / smoke-tests it (Docker) |
 | `make infra-check` | formats, validates and tests `infra/` against a mocked AWS provider |
 
@@ -95,6 +95,7 @@ a throwaway GitHub repo (destructive: it force-pushes that repo).
 
 ```
 cmd/underling/          main
+cmd/underling-runner/   main of the runner: one investigation's Claude step as a process of its own
 internal/events/        event contracts shared between slices
 internal/platform/      app (registration, router, lifecycle), eventstore, eventhandler
 internal/slices/        one package per slice

@@ -53,7 +53,7 @@ RUN groupadd -g 10001 underling \
 	&& install -d -o root -g root -m 0755 /var/lib/underling \
 	&& install -d -o underling -g underling -m 0700 /var/lib/underling/data /var/lib/underling/work
 
-COPY --chmod=0755 underling underling-sandbox-probe /usr/local/bin/
+COPY --chmod=0755 underling underling-runner underling-sandbox-probe /usr/local/bin/
 
 # Required, no default: make image-context records them from the staged
 # plugin dirs.

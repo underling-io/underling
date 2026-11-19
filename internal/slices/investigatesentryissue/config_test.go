@@ -2,6 +2,7 @@ package investigatesentryissue
 
 import (
 	"maps"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -41,6 +42,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 		pluginDirs:  []string{"/plugins/codex"},
 		timeout:     30 * time.Minute,
 		maxAge:      time.Hour,
+		maxBundle:   1 << 30,
 		claudeBin:   "claude",
 		workDir:     "",
 		path:        "/usr/bin:/bin",
@@ -54,16 +56,18 @@ func TestLoadConfigDefaults(t *testing.T) {
 
 func TestLoadConfigReadsEveryVariable(t *testing.T) {
 	got, err := loadConfig(with(map[string]string{
-		"SENTRY_GITHUB_REPOS":     " 1=acme/web , 42=Other-Org/api.v2_x ",
-		"CLAUDE_PLUGIN_DIRS":      "/p/codex, /p/auto-task",
-		"INVESTIGATION_TIMEOUT":   "90s",
-		"INVESTIGATION_MAX_AGE":   "15m",
-		"CLAUDE_BIN":              "/opt/claude",
-		"INVESTIGATION_WORK_DIR":  "/var/underling",
-		"INVESTIGATION_DENY_READ": " /srv/data , /etc/underling/ ",
-		"HOME":                    "/home/underling/",
-		"GITHUB_API_URL":          "http://127.0.0.1:8080/api/",
-		"GITHUB_CLONE_URL":        "/srv/remotes/",
+		"SENTRY_GITHUB_REPOS":   " 1=acme/web , 42=Other-Org/api.v2_x ",
+		"CLAUDE_PLUGIN_DIRS":    "/p/codex, /p/auto-task",
+		"INVESTIGATION_TIMEOUT": "90s",
+		"INVESTIGATION_MAX_AGE": "15m",
+		"CLAUDE_BIN":            "/opt/claude",
+
+		"INVESTIGATION_MAX_BUNDLE_BYTES": "4096",
+		"INVESTIGATION_WORK_DIR":         "/var/underling",
+		"INVESTIGATION_DENY_READ":        " /srv/data , /etc/underling/ ",
+		"HOME":                           "/home/underling/",
+		"GITHUB_API_URL":                 "http://127.0.0.1:8080/api/",
+		"GITHUB_CLONE_URL":               "/srv/remotes/",
 	}))
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
@@ -80,6 +84,9 @@ func TestLoadConfigReadsEveryVariable(t *testing.T) {
 	}
 	if got.apiURL != "http://127.0.0.1:8080/api/" || got.cloneBase != "/srv/remotes/" {
 		t.Errorf("apiURL = %q and cloneBase = %q, want http://127.0.0.1:8080/api/ and /srv/remotes/", got.apiURL, got.cloneBase)
+	}
+	if got.maxBundle != 4096 {
+		t.Errorf("maxBundle = %d, want 4096", got.maxBundle)
 	}
 	if got.timeout != 90*time.Second || got.maxAge != 15*time.Minute || got.claudeBin != "/opt/claude" || got.workDir != "/var/underling" {
 		t.Errorf("got %+v", got)
@@ -112,6 +119,10 @@ func TestLoadConfigRejectsInvalidValues(t *testing.T) {
 		{"INVESTIGATION_TIMEOUT", "-1m"},
 		{"INVESTIGATION_MAX_AGE", "soon"},
 		{"INVESTIGATION_MAX_AGE", "0"},
+		{"INVESTIGATION_MAX_BUNDLE_BYTES", "0"},
+		{"INVESTIGATION_MAX_BUNDLE_BYTES", "-1"},
+		{"INVESTIGATION_MAX_BUNDLE_BYTES", "1GiB"},
+		{"INVESTIGATION_MAX_BUNDLE_BYTES", "1.5"},
 		{"INVESTIGATION_DENY_READ", "relative/dir"},
 		{"INVESTIGATION_DENY_READ", "/a,,/b"},
 		{"GITHUB_API_URL", "api.github.com"},
@@ -130,6 +141,19 @@ func TestLoadConfigRejectsInvalidValues(t *testing.T) {
 				t.Fatalf("got error %v, want one naming %s", err, tt.variable)
 			}
 		})
+	}
+}
+
+func TestLoadConfigCapsTheBundleLimitBelowTheLargestInt64(t *testing.T) {
+	// underling reads one byte past the limit to notice a larger bundle.
+	_, err := loadConfig(with(map[string]string{"INVESTIGATION_MAX_BUNDLE_BYTES": "9223372036854775807"}))
+	if want := "INVESTIGATION_MAX_BUNDLE_BYTES: 9223372036854775807 is larger than the most, 9223372036854775806"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("got error %v, want %q", err, want)
+	}
+
+	got, err := loadConfig(with(map[string]string{"INVESTIGATION_MAX_BUNDLE_BYTES": "9223372036854775806"}))
+	if err != nil || got.maxBundle != math.MaxInt64-1 {
+		t.Errorf("got maxBundle %d and error %v, want the largest value accepted", got.maxBundle, err)
 	}
 }
 

@@ -72,16 +72,17 @@ func readStream(r io.Reader) (streamOutput, error) {
 	return out, nil
 }
 
-// checkInit checks that the session started as configured: in acceptEdits
-// mode, a plugin loaded from each of pluginDirs, and no plugin errors. -p
+// checkInit checks that the session started as configured: in the
+// permission mode it was started with, a plugin loaded from each of
+// pluginDirs, and no plugin errors. -p
 // silently ignores invalid settings, so the init event is the only proof
 // that --settings and --plugin-dir took effect.
-func checkInit(init *initEvent, pluginDirs []string) error {
+func checkInit(init *initEvent, mode string, pluginDirs []string) error {
 	if init == nil {
 		return errors.New("no system/init event")
 	}
-	if init.PermissionMode != "acceptEdits" {
-		return fmt.Errorf("permission mode %q, not acceptEdits", init.PermissionMode)
+	if init.PermissionMode != mode {
+		return fmt.Errorf("permission mode %q, not %s", init.PermissionMode, mode)
 	}
 	for _, dir := range pluginDirs {
 		if !slices.ContainsFunc(init.Plugins, func(p initPlugin) bool { return loadedFrom(p.Path, dir) }) {

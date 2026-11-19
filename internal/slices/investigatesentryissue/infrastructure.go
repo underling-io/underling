@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
+	"underling/internal/slices/investigatesentryissue/bedrock"
 	"underling/internal/slices/investigatesentryissue/claude"
 	"underling/internal/slices/investigatesentryissue/github"
 	"underling/internal/slices/investigatesentryissue/workspace"
@@ -40,11 +41,11 @@ type workspaceRun struct {
 func (r *workspaceRun) claude(ctx context.Context, prompt string) (string, error) {
 	cfg := claudeConfig(r.cfg)
 	if b := r.cfg.bedrock; b != nil {
-		creds, err := runCredentials(ctx, r.aws, r.cfg.timeout)
+		creds, err := bedrock.RunCredentials(ctx, r.aws, r.cfg.timeout)
 		if err != nil {
 			return "", err
 		}
-		if err := writeCodexConfig(r.ws.Home, b); err != nil {
+		if err := bedrock.WriteCodexConfig(r.ws.Home, b.codexModel, b.codexRegion); err != nil {
 			return "", err
 		}
 		cfg.Bedrock = &claude.Bedrock{Region: b.region, Model: b.model, SmallFastModel: b.smallFastModel, CodexRegion: b.codexRegion, Credentials: creds}
@@ -67,6 +68,10 @@ func (r *workspaceRun) changedPaths(ctx context.Context) ([]string, error) {
 }
 
 func (r *workspaceRun) push(ctx context.Context) error { return r.ws.Push(ctx) }
+
+// redact returns text as it is: a run in underling's process has no
+// secrets of its own.
+func (r *workspaceRun) redact(text string) string { return text }
 
 func (r *workspaceRun) defaultBranch() string { return r.ws.DefaultBranch }
 

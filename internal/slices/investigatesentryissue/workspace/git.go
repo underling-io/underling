@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	gitNetworkTimeout = 10 * time.Minute // clone, fetch and push
+	gitNetworkTimeout = 10 * time.Minute // clone, fetch, push and bundle
 	gitLocalTimeout   = time.Minute      // everything else
 	// gitWaitDelay bounds how long a killed git's output is still read,
 	// e.g. while a lingering git-remote-https holds the pipes.
@@ -76,7 +76,7 @@ func (g gitRunner) run(ctx context.Context, dir string, auth bool, args ...strin
 
 func (g gitRunner) timeout(args []string) time.Duration {
 	switch subcommand(args) {
-	case "clone", "fetch", "push":
+	case "clone", "fetch", "push", "bundle":
 		return g.networkTimeout
 	}
 	return g.localTimeout
